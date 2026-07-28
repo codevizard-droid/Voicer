@@ -1,3 +1,5 @@
+pip>=24.0
+setuptools>=69.0.0
+wheel
 telethon==1.36.0
 openai-whisper==20231117
-python-3.10.13
