@@ -3,41 +3,40 @@ import uuid
 import asyncio
 import subprocess
 import threading
+import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-import whisper
 
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
-MODEL_SIZE = os.getenv("MODEL_SIZE", "small")
 PORT = int(os.getenv("PORT", "7860"))
 
 BOT_STATUS = "starting..."
 BOT_NAME = ""
-model = None
 client = None
 
-def load_model():
-    global model, BOT_STATUS
-    BOT_STATUS = "модель..."
-    print(f"📥 Завантаження {MODEL_SIZE}...")
-    model = whisper.load_model(MODEL_SIZE)
-    print("✅ Модель готова")
-
 def transcribe_audio(audio_path):
+    """Використовує безкоштовний Whisper API"""
     try:
-        result = model.transcribe(audio_path, language="uk")
-        text = result["text"].strip()
-        return {"text": text or "Не розпізнано", "success": bool(text)}
-    except:
-        try:
-            result = model.transcribe(audio_path)
-            text = result["text"].strip()
-            return {"text": text or "Не розпізнано", "success": bool(text)}
-        except Exception as e:
-            return {"text": str(e), "success": False}
+        with open(audio_path, 'rb') as f:
+            files = {'file': ('audio.wav', f, 'audio/wav')}
+            data = {'language': 'uk'}
+            response = requests.post(
+                'https://whisper.sellauth.com/v1/transcribe',
+                files=files,
+                data=data,
+                timeout=60
+            )
+            if response.status_code == 200:
+                result = response.json()
+                text = result.get('text', '').strip()
+                return {"text": text or "Не розпізнано", "success": bool(text)}
+            else:
+                return {"text": "Помилка API", "success": False}
+    except Exception as e:
+        return {"text": str(e), "success": False}
 
 def convert_to_wav(input_path, wav_path):
     cmd = ['ffmpeg', '-i', input_path, '-ar', '16000', '-ac', '1', '-y', wav_path]
@@ -51,7 +50,7 @@ class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Voice Bot</title>
 <style>body{{font-family:Arial;text-align:center;padding:50px;background:#f5f5f5}}.card{{background:#fff;padding:30px;border-radius:10px;max-width:400px;margin:0 auto;box-shadow:0 2px 10px rgba(0,0,0,0.1)}}.ok{{color:#28a745;font-weight:bold}}</style>
-</head><body><div class="card"><h1>🎙 Voice Transcriber Bot</h1><p class="ok">{BOT_STATUS}</p><p>👤 {BOT_NAME}</p><p>🧠 {MODEL_SIZE}</p><hr><p>📋 <b>.t</b> на голосове</p></div></body></html>"""
+</head><body><div class="card"><h1>🎙 Voice Transcriber Bot</h1><p class="ok">{BOT_STATUS}</p><p>👤 {BOT_NAME}</p><hr><p>📋 <b>.t</b> на голосове</p></div></body></html>"""
         self.send_response(200)
         self.send_header('Content-Type','text/html;charset=utf-8')
         self.end_headers()
@@ -95,7 +94,6 @@ async def handle_message(event):
 
 async def run_bot():
     global client, BOT_STATUS, BOT_NAME
-    load_model()
     BOT_STATUS="запуск..."
     client=TelegramClient(StringSession(SESSION_STRING),API_ID,API_HASH)
     @client.on(events.NewMessage(pattern=r'^\.(t|р|s|transcribe|розшифруй|short)$'))
