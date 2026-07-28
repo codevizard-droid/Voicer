@@ -20,35 +20,51 @@ BOT_NAME = ""
 client = None
 
 def transcribe_audio(audio_path):
-    """Розшифровка через Gemini API (безкоштовно)"""
-    try:
-        # Читаємо аудіо та кодуємо в base64
-        with open(audio_path, 'rb') as f:
-            audio_base64 = base64.b64encode(f.read()).decode('utf-8')
-        
-        # Відправляємо в Gemini
-        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-        
-        payload = {
-            "contents": [{
-                "parts": [
-                    {"text": "Transcribe this audio to Ukrainian. Return ONLY the transcription text, nothing else."},
-                    {"inline_data": {"mime_type": "audio/wav", "data": audio_base64}}
-                ]
-            }]
-        }
-        
-        response = requests.post(url, json=payload, timeout=60)
-        
-        if response.status_code == 200:
-            result = response.json()
-            text = result['candidates'][0]['content']['parts'][0]['text'].strip()
-            return {"text": text or "Не розпізнано", "success": bool(text)}
-        else:
-            return {"text": f"Помилка API: {response.status_code}", "success": False}
-    except Exception as e:
-        return {"text": str(e), "success": False}
-
+    """Розшифровка через Gemini API з повторними спробами"""
+    import time
+    
+    # Конвертуємо в mp3 для меншого розміру
+    mp3_path = audio_path.replace('.wav', '.mp3')
+    cmd = ['ffmpeg', '-i', audio_path, '-b:a', '32k', '-ar', '16000', '-ac', '1', '-y', mp3_path]
+    subprocess.run(cmd, check=True, capture_output=True)
+    
+    # Використовуємо mp3 якщо він менший
+    use_path = mp3_path if os.path.exists(mp3_path) and os.path.getsize(mp3_path) < os.path.getsize(audio_path) else audio_path
+    
+    for attempt in range(3):  # 3 спроби
+        try:
+            with open(use_path, 'rb') as f:
+                audio_base64 = base64.b64encode(f.read()).decode('utf-8')
+            
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+            
+            payload = {
+                "contents": [{
+                    "parts": [
+                        {"text": "Transcribe this audio. Return ONLY the text."},
+                        {"inline_data": {"mime_type": "audio/mp3", "data": audio_base64}}
+                    ]
+                }]
+            }
+            
+            response = requests.post(url, json=payload, timeout=60)
+            
+            if response.status_code == 200:
+                result = response.json()
+                text = result['candidates'][0]['content']['parts'][0]['text'].strip()
+                return {"text": text or "Не розпізнано", "success": bool(text)}
+            elif response.status_code == 429:
+                wait = (attempt + 1) * 10  # 10, 20, 30 секунд
+                print(f"⏳ Ліміт, чекаємо {wait}с...")
+                time.sleep(wait)
+            else:
+                print(f"❌ API: {response.status_code} - {response.text[:200]}")
+        except Exception as e:
+            print(f"❌ Спроба {attempt+1}: {e}")
+            time.sleep(5)
+    
+    return {"text": "Перевищено ліміт. Спробуйте пізніше.", "success": False}
+    
 def convert_to_wav(input_path, wav_path):
     cmd = ['ffmpeg', '-i', input_path, '-ar', '16000', '-ac', '1', '-y', wav_path]
     try:
