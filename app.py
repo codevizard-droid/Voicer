@@ -4,6 +4,7 @@ import asyncio
 import subprocess
 import threading
 import requests
+import base64
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -12,25 +13,36 @@ API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
 PORT = int(os.getenv("PORT", "7860"))
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
 
 BOT_STATUS = "starting..."
 BOT_NAME = ""
 client = None
 
 def transcribe_audio(audio_path):
-    """Розшифровка через OpenAI Whisper API"""
+    """Розшифровка через Gemini API (безкоштовно)"""
     try:
+        # Читаємо аудіо та кодуємо в base64
         with open(audio_path, 'rb') as f:
-            response = requests.post(
-                'https://api.openai.com/v1/audio/transcriptions',
-                headers={'Authorization': f'Bearer {OPENAI_API_KEY}'},
-                files={'file': ('audio.wav', f, 'audio/wav')},
-                data={'model': 'whisper-1', 'language': 'uk'},
-                timeout=60
-            )
+            audio_base64 = base64.b64encode(f.read()).decode('utf-8')
+        
+        # Відправляємо в Gemini
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
+        
+        payload = {
+            "contents": [{
+                "parts": [
+                    {"text": "Transcribe this audio to Ukrainian. Return ONLY the transcription text, nothing else."},
+                    {"inline_data": {"mime_type": "audio/wav", "data": audio_base64}}
+                ]
+            }]
+        }
+        
+        response = requests.post(url, json=payload, timeout=60)
+        
         if response.status_code == 200:
-            text = response.json().get('text', '').strip()
+            result = response.json()
+            text = result['candidates'][0]['content']['parts'][0]['text'].strip()
             return {"text": text or "Не розпізнано", "success": bool(text)}
         else:
             return {"text": f"Помилка API: {response.status_code}", "success": False}
