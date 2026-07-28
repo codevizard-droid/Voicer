@@ -18,7 +18,6 @@ BOT_NAME = ""
 client = None
 
 def transcribe_audio(audio_path):
-    """Використовує безкоштовний Whisper API"""
     try:
         with open(audio_path, 'rb') as f:
             files = {'file': ('audio.wav', f, 'audio/wav')}
@@ -48,14 +47,23 @@ def convert_to_wav(input_path, wav_path):
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
-        html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Voice Bot</title>
-<style>body{{font-family:Arial;text-align:center;padding:50px;background:#f5f5f5}}.card{{background:#fff;padding:30px;border-radius:10px;max-width:400px;margin:0 auto;box-shadow:0 2px 10px rgba(0,0,0,0.1)}}.ok{{color:#28a745;font-weight:bold}}</style>
-</head><body><div class="card"><h1>🎙 Voice Transcriber Bot</h1><p class="ok">{BOT_STATUS}</p><p>👤 {BOT_NAME}</p><hr><p>📋 <b>.t</b> на голосове</p></div></body></html>"""
         self.send_response(200)
-        self.send_header('Content-Type','text/html;charset=utf-8')
+        self.send_header('Content-Type', 'text/html; charset=utf-8')
         self.end_headers()
+        html = f"""OK"""
         self.wfile.write(html.encode())
-    def log_message(self,*a):pass
+    
+    def do_HEAD(self):
+        self.send_response(200)
+        self.end_headers()
+    
+    def do_POST(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"OK")
+    
+    def log_message(self, *a):
+        pass
 
 async def handle_message(event):
     message = event.message
@@ -68,8 +76,10 @@ async def handle_message(event):
         return
     ext = ".ogg" if replied.voice else (".mp4" if replied.video_note else ".mp3")
     status = await message.reply("🎙 Розшифровую...")
-    try:await message.delete()
-    except:pass
+    try:
+        await message.delete()
+    except:
+        pass
     tid = str(uuid.uuid4())
     inp = f"/tmp/{tid}{ext}"
     wav = f"/tmp/{tid}.wav"
@@ -79,39 +89,47 @@ async def handle_message(event):
             r = transcribe_audio(wav)
             if r.get("success"):
                 t = r["text"]
-                if len(t)>4000:
+                if len(t) > 4000:
                     await status.delete()
                     await message.respond(f"📝 {t[:4000]}")
-                    for i in range(4000,len(t),4000):await message.respond(t[i:i+4000])
-                else:await status.edit(f"📝 {t}")
-            else:await status.edit("❌ Не вдалося")
-        else:await status.edit("❌ Конвертація")
-    except Exception as e:
-        await status.edit(f"❌ Помилка")
+                    for i in range(4000, len(t), 4000):
+                        await message.respond(t[i:i+4000])
+                else:
+                    await status.edit(f"📝 {t}")
+            else:
+                await status.edit("❌ Не вдалося")
+        else:
+            await status.edit("❌ Конвертація")
+    except:
+        await status.edit("❌ Помилка")
     finally:
-        for p in [inp,wav]:
-            if os.path.exists(p):os.remove(p)
+        for p in [inp, wav]:
+            if os.path.exists(p):
+                os.remove(p)
 
 async def run_bot():
     global client, BOT_STATUS, BOT_NAME
-    BOT_STATUS="запуск..."
-    client=TelegramClient(StringSession(SESSION_STRING),API_ID,API_HASH)
+    BOT_STATUS = "запуск..."
+    client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+    
     @client.on(events.NewMessage(pattern=r'^\.(t|р|s|transcribe|розшифруй|short)$'))
-    async def h(e):await handle_message(e)
+    async def h(e):
+        await handle_message(e)
+    
     await client.start()
-    me=await client.get_me()
-    BOT_NAME=me.first_name or "user"
-    BOT_STATUS="працює ✅"
+    me = await client.get_me()
+    BOT_NAME = me.first_name or "user"
+    BOT_STATUS = "працює ✅"
     print(f"✅ {BOT_NAME}")
     await client.run_until_disconnected()
 
 def start_bot():
-    loop=asyncio.new_event_loop()
+    loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
     loop.run_until_complete(run_bot())
 
-if __name__=="__main__":
-    threading.Thread(target=start_bot,daemon=True).start()
-    srv=HTTPServer(('0.0.0.0',PORT),Handler)
+if __name__ == "__main__":
+    threading.Thread(target=start_bot, daemon=True).start()
+    srv = HTTPServer(('0.0.0.0', PORT), Handler)
     print(f"🌐 Порт {PORT}")
     srv.serve_forever()
