@@ -6,7 +6,7 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from faster_whisper import WhisperModel
+import whisper
 
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
@@ -16,47 +16,42 @@ PORT = int(os.getenv("PORT", "7860"))
 
 BOT_STATUS = "starting..."
 BOT_NAME = ""
-transcriber = None
+model = None
 client = None
 
-class VoiceTranscriber:
-    def __init__(self, model_size="small"):
-        self.model_size = model_size
-        self.model = None
+def load_model():
+    global model, BOT_STATUS
+    BOT_STATUS = "модель..."
+    print(f"📥 Завантаження {MODEL_SIZE}...")
+    model = whisper.load_model(MODEL_SIZE)
+    print("✅ Модель готова")
 
-    def load_model(self):
-        if self.model is None:
-            self.model = WhisperModel(self.model_size, device="cpu", compute_type="int8", download_root="./models")
-        return self.model
-
-    def convert_to_wav(self, input_path, wav_path):
-        cmd = ['ffmpeg', '-i', input_path, '-ar', '16000', '-ac', '1', '-y', wav_path]
+def transcribe_audio(audio_path):
+    try:
+        result = model.transcribe(audio_path, language="uk")
+        text = result["text"].strip()
+        return {"text": text or "Не розпізнано", "success": bool(text)}
+    except:
         try:
-            subprocess.run(cmd, check=True, capture_output=True)
-            return True
-        except:
-            return False
-
-    def transcribe_audio(self, audio_path):
-        if not self.model:
-            self.load_model()
-        try:
-            segments, info = self.model.transcribe(audio_path, language="uk", beam_size=5, vad_filter=True)
-            text = " ".join([s.text.strip() for s in segments])
+            result = model.transcribe(audio_path)
+            text = result["text"].strip()
             return {"text": text or "Не розпізнано", "success": bool(text)}
-        except:
-            try:
-                segments, info = self.model.transcribe(audio_path, language=None, beam_size=5, vad_filter=True)
-                text = " ".join([s.text.strip() for s in segments])
-                return {"text": text or "Не розпізнано", "success": bool(text)}
-            except Exception as e:
-                return {"text": str(e), "success": False}
+        except Exception as e:
+            return {"text": str(e), "success": False}
+
+def convert_to_wav(input_path, wav_path):
+    cmd = ['ffmpeg', '-i', input_path, '-ar', '16000', '-ac', '1', '-y', wav_path]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True)
+        return True
+    except:
+        return False
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         html = f"""<!DOCTYPE html><html><head><meta charset="UTF-8"><title>Voice Bot</title>
 <style>body{{font-family:Arial;text-align:center;padding:50px;background:#f5f5f5}}.card{{background:#fff;padding:30px;border-radius:10px;max-width:400px;margin:0 auto;box-shadow:0 2px 10px rgba(0,0,0,0.1)}}.ok{{color:#28a745;font-weight:bold}}</style>
-</head><body><div class="card"><h1>🎙 Voice Transcriber Bot</h1><p class="ok">Статус: {BOT_STATUS}</p><p>Акаунт: {BOT_NAME}</p><p>Модель: {MODEL_SIZE}</p><hr><p>📋 <b>.t</b> на голосове</p></div></body></html>"""
+</head><body><div class="card"><h1>🎙 Voice Transcriber Bot</h1><p class="ok">{BOT_STATUS}</p><p>👤 {BOT_NAME}</p><p>🧠 {MODEL_SIZE}</p><hr><p>📋 <b>.t</b> на голосове</p></div></body></html>"""
         self.send_response(200)
         self.send_header('Content-Type','text/html;charset=utf-8')
         self.end_headers()
@@ -81,8 +76,8 @@ async def handle_message(event):
     wav = f"/tmp/{tid}.wav"
     try:
         await client.download_media(replied, inp)
-        if transcriber.convert_to_wav(inp, wav):
-            r = transcriber.transcribe_audio(wav)
+        if convert_to_wav(inp, wav):
+            r = transcribe_audio(wav)
             if r.get("success"):
                 t = r["text"]
                 if len(t)>4000:
@@ -92,16 +87,15 @@ async def handle_message(event):
                 else:await status.edit(f"📝 {t}")
             else:await status.edit("❌ Не вдалося")
         else:await status.edit("❌ Конвертація")
-    except:await status.edit("❌ Помилка")
+    except Exception as e:
+        await status.edit(f"❌ Помилка")
     finally:
         for p in [inp,wav]:
             if os.path.exists(p):os.remove(p)
 
 async def run_bot():
-    global client,transcriber,BOT_STATUS,BOT_NAME
-    BOT_STATUS="модель..."
-    transcriber=VoiceTranscriber(model_size=MODEL_SIZE)
-    transcriber.load_model()
+    global client, BOT_STATUS, BOT_NAME
+    load_model()
     BOT_STATUS="запуск..."
     client=TelegramClient(StringSession(SESSION_STRING),API_ID,API_HASH)
     @client.on(events.NewMessage(pattern=r'^\.(t|р|s|transcribe|розшифруй|short)$'))
