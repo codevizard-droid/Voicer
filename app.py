@@ -6,13 +6,13 @@ import threading
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-import whisper
+from faster_whisper import WhisperModel
 
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
 PORT = int(os.getenv("PORT", "7860"))
-MODEL_SIZE = os.getenv("MODEL_SIZE", "tiny")
+MODEL_SIZE = os.getenv("MODEL_SIZE", "small")
 
 BOT_STATUS = "starting..."
 BOT_NAME = ""
@@ -21,20 +21,20 @@ model = None
 
 def load_model():
     global model, BOT_STATUS
-    BOT_STATUS = "завантаження моделі..."
-    print(f"📥 Whisper {MODEL_SIZE}...")
-    model = whisper.load_model(MODEL_SIZE)
+    BOT_STATUS = "модель..."
+    print(f"📥 {MODEL_SIZE}...")
+    model = WhisperModel(MODEL_SIZE, device="cpu", compute_type="int8", download_root="./models")
     print("✅ Модель готова")
 
 def transcribe_audio(audio_path):
     try:
-        result = model.transcribe(audio_path, language="uk")
-        text = result["text"].strip()
+        segments, info = model.transcribe(audio_path, language="uk", beam_size=5, vad_filter=True)
+        text = " ".join([s.text.strip() for s in segments])
         return {"text": text or "Не розпізнано", "success": bool(text)}
     except:
         try:
-            result = model.transcribe(audio_path)
-            text = result["text"].strip()
+            segments, info = model.transcribe(audio_path, beam_size=5, vad_filter=True)
+            text = " ".join([s.text.strip() for s in segments])
             return {"text": text or "Не розпізнано", "success": bool(text)}
         except Exception as e:
             return {"text": str(e), "success": False}
@@ -91,8 +91,8 @@ async def handle_message(event):
                 await status.edit("❌ Не вдалося")
         else:
             await status.edit("❌ Конвертація")
-    except Exception as e:
-        await status.edit(f"❌ Помилка")
+    except:
+        await status.edit("❌ Помилка")
     finally:
         for p in [inp, wav]:
             if os.path.exists(p): os.remove(p)
