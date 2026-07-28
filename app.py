@@ -19,29 +19,42 @@ BOT_NAME = ""
 client = None
 
 def transcribe_audio(audio_path):
-    """Розшифровка через Groq API"""
+    """Розшифровка через Groq API — покращена якість"""
     try:
         with open(audio_path, 'rb') as f:
             response = requests.post(
                 'https://api.groq.com/openai/v1/audio/transcriptions',
                 headers={'Authorization': f'Bearer {GROQ_API_KEY}'},
                 files={'file': ('audio.wav', f, 'audio/wav')},
-                data={'model': 'whisper-large-v3', 'language': 'uk'},
+                data={
+                    'model': 'whisper-large-v3',
+                    'language': 'uk',
+                    'prompt': 'Це українська мова. Транскрибуй чітко, без виправлень.',
+                    'temperature': '0',
+                    'response_format': 'verbose_json'
+                },
                 timeout=30
             )
         
         if response.status_code == 200:
-            text = response.json().get('text', '').strip()
+            data = response.json()
+            text = data.get('text', '').strip()
+            detected_lang = data.get('language', 'uk')
+            print(f"✅ Мова: {detected_lang} | Текст: {text[:100]}")
             return {"text": text or "Не розпізнано", "success": bool(text)}
-        elif response.status_code == 429:
-            return {"text": "⚠️ Ліміт. Спробуйте за хвилину.", "success": False}
         else:
             return {"text": f"Помилка {response.status_code}", "success": False}
     except Exception as e:
         return {"text": f"❌ {str(e)[:100]}", "success": False}
-
+        
 def convert_to_wav(input_path, wav_path):
-    cmd = ['ffmpeg', '-i', input_path, '-ar', '16000', '-ac', '1', '-y', wav_path]
+    cmd = [
+        'ffmpeg', '-i', input_path,
+        '-ar', '16000',
+        '-ac', '1',
+        '-af', 'highpass=f=80,lowpass=f=3000,volume=2.0',  # Фільтри для голосу
+        '-y', wav_path
+    ]
     try:
         subprocess.run(cmd, check=True, capture_output=True, timeout=30)
         return True
