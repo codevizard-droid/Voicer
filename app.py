@@ -4,7 +4,6 @@ import asyncio
 import subprocess
 import threading
 import requests
-import base64
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
@@ -13,62 +12,38 @@ API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
 PORT = int(os.getenv("PORT", "7860"))
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY", "")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 BOT_STATUS = "starting..."
 BOT_NAME = ""
 client = None
 
 def transcribe_audio(audio_path):
-    """Розшифровка через Gemini API з повторними спробами"""
-    import time
-    
-    # Конвертуємо в mp3 для меншого розміру
-    mp3_path = audio_path.replace('.wav', '.mp3')
-    cmd = ['ffmpeg', '-i', audio_path, '-b:a', '32k', '-ar', '16000', '-ac', '1', '-y', mp3_path]
-    subprocess.run(cmd, check=True, capture_output=True)
-    
-    # Використовуємо mp3 якщо він менший
-    use_path = mp3_path if os.path.exists(mp3_path) and os.path.getsize(mp3_path) < os.path.getsize(audio_path) else audio_path
-    
-    for attempt in range(3):  # 3 спроби
-        try:
-            with open(use_path, 'rb') as f:
-                audio_base64 = base64.b64encode(f.read()).decode('utf-8')
-            
-            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent?key={GEMINI_API_KEY}"
-            
-            payload = {
-                "contents": [{
-                    "parts": [
-                        {"text": "Transcribe this audio. Return ONLY the text."},
-                        {"inline_data": {"mime_type": "audio/mp3", "data": audio_base64}}
-                    ]
-                }]
-            }
-            
-            response = requests.post(url, json=payload, timeout=60)
-            
-            if response.status_code == 200:
-                result = response.json()
-                text = result['candidates'][0]['content']['parts'][0]['text'].strip()
-                return {"text": text or "Не розпізнано", "success": bool(text)}
-            elif response.status_code == 429:
-                wait = (attempt + 1) * 10  # 10, 20, 30 секунд
-                print(f"⏳ Ліміт, чекаємо {wait}с...")
-                time.sleep(wait)
-            else:
-                print(f"❌ API: {response.status_code} - {response.text[:200]}")
-        except Exception as e:
-            print(f"❌ Спроба {attempt+1}: {e}")
-            time.sleep(5)
-    
-    return {"text": "Перевищено ліміт. Спробуйте пізніше.", "success": False}
-    
+    """Розшифровка через Groq API"""
+    try:
+        with open(audio_path, 'rb') as f:
+            response = requests.post(
+                'https://api.groq.com/openai/v1/audio/transcriptions',
+                headers={'Authorization': f'Bearer {GROQ_API_KEY}'},
+                files={'file': ('audio.wav', f, 'audio/wav')},
+                data={'model': 'whisper-large-v3', 'language': 'uk'},
+                timeout=30
+            )
+        
+        if response.status_code == 200:
+            text = response.json().get('text', '').strip()
+            return {"text": text or "Не розпізнано", "success": bool(text)}
+        elif response.status_code == 429:
+            return {"text": "⚠️ Ліміт. Спробуйте за хвилину.", "success": False}
+        else:
+            return {"text": f"Помилка {response.status_code}", "success": False}
+    except Exception as e:
+        return {"text": f"❌ {str(e)[:100]}", "success": False}
+
 def convert_to_wav(input_path, wav_path):
     cmd = ['ffmpeg', '-i', input_path, '-ar', '16000', '-ac', '1', '-y', wav_path]
     try:
-        subprocess.run(cmd, check=True, capture_output=True)
+        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
         return True
     except:
         return False
@@ -85,22 +60,23 @@ class Handler(BaseHTTPRequestHandler):
 
 async def handle_message(event):
     message = event.message
-    print(f"📨 Команда: '{message.text}'")
+    print(f"📨 {message.text}")
     
     if not message.is_reply:
-        await message.reply("❌ Відповідайте командою на голосове")
+        await message.reply("❌ Відповідайте на голосове")
         return
     
     replied = await message.get_reply_message()
     
     if not (replied.voice or replied.video_note or replied.audio):
-        await message.reply("❌ Не голосове/відео/аудіо")
+        await message.reply("❌ Не голосове")
         return
     
     ext = ".ogg" if replied.voice else (".mp4" if replied.video_note else ".mp3")
     status = await message.reply("🎙 Розшифровую...")
     try: await message.delete()
     except: pass
+    
     tid = str(uuid.uuid4())
     inp = f"/tmp/{tid}{ext}"
     wav = f"/tmp/{tid}.wav"
@@ -123,7 +99,7 @@ async def handle_message(event):
         else:
             await status.edit("❌ Конвертація")
     except Exception as e:
-        await status.edit("❌ Помилка")
+        await status.edit(f"❌ Помилка")
     finally:
         for p in [inp, wav]:
             if os.path.exists(p): os.remove(p)
