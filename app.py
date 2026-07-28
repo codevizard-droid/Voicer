@@ -60,13 +60,19 @@ class Handler(BaseHTTPRequestHandler):
 
 async def handle_message(event):
     message = event.message
+    print(f"📨 Команда: '{message.text}' | reply={message.is_reply}")
+    
     if not message.is_reply:
         await message.reply("❌ Відповідайте командою на голосове")
         return
+    
     replied = await message.get_reply_message()
+    print(f"📎 voice={bool(replied.voice)} video={bool(replied.video_note)} audio={bool(replied.audio)}")
+    
     if not (replied.voice or replied.video_note or replied.audio):
         await message.reply("❌ Не голосове/відео/аудіо")
         return
+    
     ext = ".ogg" if replied.voice else (".mp4" if replied.video_note else ".mp3")
     status = await message.reply("🎙 Розшифровую...")
     try: await message.delete()
@@ -75,9 +81,13 @@ async def handle_message(event):
     inp = f"/tmp/{tid}{ext}"
     wav = f"/tmp/{tid}.wav"
     try:
+        print(f"📥 Завантаження...")
         await client.download_media(replied, inp)
+        print(f"🔄 Конвертація...")
         if convert_to_wav(inp, wav):
+            print(f"🎙 Розпізнавання...")
             r = transcribe_audio(wav)
+            print(f"📝 Результат: {r['text'][:50]}...")
             if r.get("success"):
                 t = r["text"]
                 if len(t) > 4000:
@@ -91,12 +101,13 @@ async def handle_message(event):
                 await status.edit("❌ Не вдалося")
         else:
             await status.edit("❌ Конвертація")
-    except:
-        await status.edit("❌ Помилка")
+    except Exception as e:
+        print(f"❌ Помилка: {e}")
+        await status.edit(f"❌ Помилка")
     finally:
         for p in [inp, wav]:
             if os.path.exists(p): os.remove(p)
-
+                
 async def run_bot():
     global client, BOT_STATUS, BOT_NAME
     load_model()
