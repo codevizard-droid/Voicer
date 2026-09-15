@@ -18,8 +18,55 @@ BOT_STATUS = "starting..."
 BOT_NAME = ""
 client = None
 
+def convert_to_wav(input_path, wav_path):
+    """Конвертація без таймауту для довгих аудіо"""
+    cmd = [
+        'ffmpeg', '-i', input_path,
+        '-ar', '16000', '-ac', '1',
+        '-y', wav_path
+    ]
+    try:
+        # Без timeout — довгі аудіо потребують часу
+        subprocess.run(cmd, check=True, capture_output=True)
+        return True
+    except Exception as e:
+        print(f"❌ FFmpeg: {e}")
+        return False
+
+def split_audio(wav_path, chunk_minutes=5):
+    """Розбиває WAV на частини по N хвилин"""
+    chunks = []
+    base = wav_path.rsplit('.', 1)[0]
+    chunk_seconds = chunk_minutes * 60
+    
+    i = 0
+    start = 0
+    while True:
+        chunk_path = f"{base}_part{i}.wav"
+        cmd = [
+            'ffmpeg', '-i', wav_path,
+            '-ss', str(start),
+            '-t', str(chunk_seconds),
+            '-ar', '16000', '-ac', '1',
+            '-y', chunk_path
+        ]
+        try:
+            result = subprocess.run(cmd, check=True, capture_output=True)
+            if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 1000:
+                chunks.append(chunk_path)
+                start += chunk_seconds
+                i += 1
+            else:
+                if os.path.exists(chunk_path):
+                    os.remove(chunk_path)
+                break
+        except:
+            break
+    
+    return chunks
+
 def transcribe_audio(audio_path):
-    """Розшифровка через Groq API — покращена якість"""
+    """Розшифровка одного файлу через Groq"""
     try:
         with open(audio_path, 'rb') as f:
             response = requests.post(
@@ -29,37 +76,19 @@ def transcribe_audio(audio_path):
                 data={
                     'model': 'whisper-large-v3',
                     'language': 'uk',
-                    'prompt': 'Це українська мова. Транскрибуй чітко, без виправлень.',
-                    'temperature': '0',
-                    'response_format': 'verbose_json'
+                    'response_format': 'text',
+                    'temperature': '0'
                 },
-                timeout=30
+                timeout=120
             )
         
         if response.status_code == 200:
-            data = response.json()
-            text = data.get('text', '').strip()
-            detected_lang = data.get('language', 'uk')
-            print(f"✅ Мова: {detected_lang} | Текст: {text[:100]}")
-            return {"text": text or "Не розпізнано", "success": bool(text)}
+            text = response.text.strip()
+            return {"text": text, "success": bool(text)}
         else:
             return {"text": f"Помилка {response.status_code}", "success": False}
     except Exception as e:
         return {"text": f"❌ {str(e)[:100]}", "success": False}
-        
-def convert_to_wav(input_path, wav_path):
-    cmd = [
-        'ffmpeg', '-i', input_path,
-        '-ar', '16000',
-        '-ac', '1',
-        '-af', 'highpass=f=80,lowpass=f=3000,volume=2.0',  # Фільтри для голосу
-        '-y', wav_path
-    ]
-    try:
-        subprocess.run(cmd, check=True, capture_output=True, timeout=30)
-        return True
-    except:
-        return False
 
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
@@ -95,27 +124,67 @@ async def handle_message(event):
     wav = f"/tmp/{tid}.wav"
     
     try:
+        # Завантажуємо
+        print("📥 Завантаження...")
         await client.download_media(replied, inp)
-        if convert_to_wav(inp, wav):
-            r = transcribe_audio(wav)
-            if r.get("success"):
-                t = r["text"]
-                if len(t) > 4000:
-                    await status.delete()
-                    await message.respond(f"📝 {t[:4000]}")
-                    for i in range(4000, len(t), 4000):
-                        await message.respond(t[i:i+4000])
-                else:
-                    await status.edit(f"📝 {t}")
-            else:
-                await status.edit(f"❌ {r.get('text', 'Не вдалося')}")
+        size_mb = os.path.getsize(inp) / (1024 * 1024)
+        print(f"📁 Розмір: {size_mb:.1f} MB")
+        
+        # Конвертуємо
+        print("🔄 Конвертація...")
+        if not convert_to_wav(inp, wav):
+            await status.edit("❌ Помилка конвертації")
+            return
+        
+        # Перевіряємо розмір
+        wav_size = os.path.getsize(wav) / (1024 * 1024)
+        print(f"📁 WAV: {wav_size:.1f} MB")
+        
+        # Якщо > 20 MB — розбиваємо
+        if wav_size > 20:
+            print("✂️ Розбиваємо на частини...")
+            await status.edit("✂️ Розбиваю на частини...")
+            
+            chunks = split_audio(wav, chunk_minutes=5)
+            print(f"📦 Частин: {len(chunks)}")
+            
+            all_text = []
+            for i, chunk in enumerate(chunks):
+                await status.edit(f"🎙 Частина {i+1}/{len(chunks)}...")
+                r = transcribe_audio(chunk)
+                if r.get("success"):
+                    all_text.append(r["text"])
+                os.remove(chunk)
+            
+            full_text = " ".join(all_text)
         else:
-            await status.edit("❌ Конвертація")
+            # Одна частина
+            r = transcribe_audio(wav)
+            if not r.get("success"):
+                await status.edit(f"❌ {r.get('text', 'Не вдалося')}")
+                return
+            full_text = r["text"]
+        
+        # Відправляємо результат
+        if full_text:
+            if len(full_text) > 4000:
+                await status.delete()
+                await message.respond(f"📝 {full_text[:4000]}")
+                for i in range(4000, len(full_text), 4000):
+                    await message.respond(full_text[i:i+4000])
+            else:
+                await status.edit(f"📝 {full_text}")
+        else:
+            await status.edit("❌ Порожній результат")
+            
     except Exception as e:
+        print(f"❌ {e}")
         await status.edit(f"❌ Помилка")
     finally:
         for p in [inp, wav]:
-            if os.path.exists(p): os.remove(p)
+            if os.path.exists(p):
+                try: os.remove(p)
+                except: pass
 
 async def run_bot():
     global client, BOT_STATUS, BOT_NAME
