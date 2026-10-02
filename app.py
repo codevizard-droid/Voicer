@@ -328,7 +328,29 @@ async def handle_settings_command(event):
     # --- Автопереклад ---
     if text == '/translate_on':
         update_user_settings(user_id, {"auto_translate": True})
-нено на 🇺🇦 Українська")
+        await event.respond("✅ Автопереклад увімкнено")
+        try: await event.message.delete()
+        except: pass
+        return
+    
+    if text == '/translate_off':
+        update_user_settings(user_id, {"auto_translate": False})
+        await event.respond("✅ Автопереклад вимкнено")
+        try: await event.message.delete()
+        except: pass
+        return
+    
+    # --- Мова перекладу ---
+    if text == '/target_en':
+        update_user_settings(user_id, {"translate_to": "en"})
+        await event.respond("✅ Мову перекладу змінено на 🇬🇧 English")
+        try: await event.message.delete()
+        except: pass
+        return
+    
+    if text == '/target_uk':
+        update_user_settings(user_id, {"translate_to": "uk"})
+        await event.respond("✅ Мову перекладу змінено на 🇺🇦 Українська")
         try: await event.message.delete()
         except: pass
         return
@@ -347,7 +369,7 @@ async def handle_settings_command(event):
         except: pass
         return
     
-     # --- Статус ---
+    # --- Статус ---
     if text == '/status':
         s = get_user_settings(user_id)
         lang = s.get('language', 'uk')
@@ -355,55 +377,44 @@ async def handle_settings_command(event):
         target = s.get('translate_to', 'en')
         auto_chats = s.get('auto_chats', [])
         
-        lang_names = {"uk": "🇺🇦 Українська", "en": "🇬🇧 English", 
-                     "ru": "🇷🇺 Русский"}
+        lang_names = {"uk": "🇺🇦 Українська", "en": "🇬🇧 English", "ru": "🇷🇺 Русский"}
         target_names = {"en": "🇬🇧 English", "uk": "🇺🇦 Українська", 
                        "pl": "🇵🇱 Polski", "ru": "🇷🇺 Русский"}
         
-        # Формуємо список чатів з назвами
         chats_text = ""
         if auto_chats:
-            chats_text = f"\n\n🤖 <b>Автотранскрипція у чатах ({len(auto_chats)}):</b>\n"
+            chats_text = f"\n🤖 <b>Автотранскрипція у чатах ({len(auto_chats)}):</b>\n"
             for i, cid in enumerate(auto_chats, 1):
                 try:
                     chat = await client.get_entity(cid)
                     title = getattr(chat, 'title', None) or getattr(chat, 'first_name', None) or f"ID {cid}"
-                    # Скорочуємо довгу назву
                     if len(title) > 30:
-                        title = title[:30] + "…"
+                        title = title[:30] + "..."
                     chats_text += f"   {i}. {title}\n"
                 except:
                     chats_text += f"   {i}. <i>ID {cid} (недоступно)</i>\n"
         else:
-            chats_text = "\n\n🤖 <b>Автотранскрипція:</b> вимкнена\n   Додайте чат командою <code>+чат</code>"
-        
-        # Статус бота
-        bot_uptime = "✅ Онлайн"
-        transcribe_status = "✅ Працює"
-        translate_status = "✅ Працює" if auto else "⏸ Очікує"
+            chats_text = "\n🤖 <b>Автотранскрипція:</b> вимкнена\n   Додайте чат командою <code>+чат</code>"
         
         text_response = (
             "📊 <b>Повний статус бота</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "\n🎙 <b>ТРАНСКРИПЦІЯ:</b>\n"
-            f"   • Мова розшифровки: {lang_names.get(lang, lang)}\n"
-            f"   • Статус: {transcribe_status}\n"
-            f"   • Команда: <code>.t</code> (у відповідь на голосове)\n"
+            f"   • Мова: {lang_names.get(lang, lang)}\n"
+            f"   • Команда: <code>.t</code>\n"
             "\n🌍 <b>ПЕРЕКЛАД:</b>\n"
             f"   • Автопереклад: {'✅ Увімкнено' if auto else '❌ Вимкнено'}\n"
-            f"   • Мова перекладу: {target_names.get(target, target)}\n"
-            f"   • Статус: {translate_status}\n"
+            f"   • Мова: {target_names.get(target, target)}\n"
             f"{chats_text}\n"
             "\n🤖 <b>СИСТЕМА:</b>\n"
-            f"   • Бот: {bot_uptime}\n"
-            f"   • Модель: Whisper Large v3 (Groq)\n"
-            f"   • Перекладач: Google Translate\n"
-            f"   • Формат: Згорнутий блок\n"
+            "   • Бот: ✅ Онлайн\n"
+            "   • Модель: Whisper Large v3\n"
+            "   • Перекладач: Google Translate\n"
             "\n━━━━━━━━━━━━━━━━━━━━\n"
-            "💡 <b>Швидкі команди:</b>\n"
-            "<code>/settings</code> — меню налаштувань\n"
-            "<code>+чат</code> / <code>-чат</code> — керування чатами\n"
-            "<code>/авточати</code> — список чатів"
+            "💡 <b>Команди:</b>\n"
+            "<code>/settings</code> — меню\n"
+            "<code>+чат</code> / <code>-чат</code> — чати\n"
+            "<code>/авточати</code> — список"
         )
         
         await event.respond(text_response, parse_mode='html')
