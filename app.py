@@ -5,8 +5,10 @@ import subprocess
 import threading
 import requests
 from http.server import HTTPServer, BaseHTTPRequestHandler
-from telethon import TelegramClient, events
+from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
+from settings import get_user_settings, update_user_settings, DEFAULT_SETTINGS
+
 
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
@@ -185,6 +187,86 @@ async def handle_message(event):
             if os.path.exists(p):
                 try: os.remove(p)
                 except: pass
+
+@client.on(events.NewMessage(pattern='/settings'))
+async def show_settings_menu(event):
+    """Показує меню налаштувань."""
+    user_id = event.sender_id
+    user_settings = get_user_settings(user_id)
+    
+    lang = user_settings.get('language', DEFAULT_SETTINGS['language'])
+    auto_translate = user_settings.get('auto_translate', DEFAULT_SETTINGS['auto_translate'])
+    translate_to = user_settings.get('translate_to', DEFAULT_SETTINGS['translate_to'])
+    
+    lang_names = {"uk": "Українська 🇺🇦", "en": "English 🇬🇧", "ru": "Русский 🇷🇺"}
+    target_lang_names = {"en": "English 🇬🇧", "uk": "Українська 🇺🇦", "pl": "Polski 🇵🇱"}
+    
+    text = (
+        "⚙️ **Налаштування бота**\n\n"
+        f"🌐 **Мова розшифровки:** {lang_names.get(lang, lang)}\n"
+        f"🔄 **Автопереклад:** {'✅ Увімкнено' if auto_translate else '❌ Вимкнено'}\n"
+        f"🎯 **Мова перекладу:** {target_lang_names.get(translate_to, translate_to)}\n"
+    )
+    
+    buttons = [
+        [Button.inline("🌐 Змінити мову розшифровки", b"menu_lang")],
+        [Button.inline(f"🔄 Автопереклад: {'Вимкнути' if auto_translate else 'Увімкнути'}", b"toggle_translate")],
+        [Button.inline("🎯 Змінити мову перекладу", b"menu_target_lang")],
+        [Button.inline("❌ Закрити", b"close_menu")]
+    ]
+    
+    await event.respond(text, buttons=buttons, parse_mode='markdown')
+
+@client.on(events.CallbackQuery())
+async def handle_settings_callback(event):
+    """Обробляє натискання кнопок у меню."""
+    data = event.data.decode('utf-8')
+    user_id = event.sender_id
+    
+    if data == "menu_lang":
+        buttons = [
+            [Button.inline("🇺🇦 Українська", b"set_lang_uk")],
+            [Button.inline("🇬🇧 English", b"set_lang_en")],
+            [Button.inline("🇷🇺 Русский", b"set_lang_ru")],
+            [Button.inline("⬅️ Назад", b"back_to_menu")]
+        ]
+        await event.edit("Оберіть мову для розшифровки:", buttons=buttons)
+    
+    elif data.startswith("set_lang_"):
+        lang = data.replace("set_lang_", "")
+        update_user_settings(user_id, {"language": lang})
+        await event.answer(f"✅ Мову змінено на {lang}", alert=True)
+        await show_settings_menu(event) # Оновлюємо меню
+    
+    elif data == "toggle_translate":
+        user_settings = get_user_settings(user_id)
+        current = user_settings.get('auto_translate', DEFAULT_SETTINGS['auto_translate'])
+        update_user_settings(user_id, {"auto_translate": not current})
+        await event.answer("✅ Налаштування оновлено", alert=True)
+        await show_settings_menu(event)
+    
+    elif data == "menu_target_lang":
+        buttons = [
+            [Button.inline("🇬🇧 English", b"set_target_en")],
+            [Button.inline("🇺🇦 Українська", b"set_target_uk")],
+            [Button.inline("🇵🇱 Polski", b"set_target_pl")],
+            [Button.inline("⬅️ Назад", b"back_to_menu")]
+        ]
+        await event.edit("Оберіть мову перекладу:", buttons=buttons)
+    
+    elif data.startswith("set_target_"):
+        lang = data.replace("set_target_", "")
+        update_user_settings(user_id, {"translate_to": lang})
+        await event.answer(f"✅ Мову перекладу змінено", alert=True)
+        await show_settings_menu(event)
+    
+    elif data == "back_to_menu":
+        await show_settings_menu(event)
+    
+    elif data == "close_menu":
+        await event.delete()
+    
+    await event.answer() # Важливо для припинення "завантаження" на кнопці[reference:3]
 
 async def run_bot():
     global client, BOT_STATUS, BOT_NAME
