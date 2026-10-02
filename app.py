@@ -203,7 +203,7 @@ async def handle_message(event):
                 except: pass
 
 async def show_settings_menu(event):
-    """Показує меню налаштувань"""
+    """Показує меню налаштувань з інлайн-кнопками"""
     user_id = event.sender_id
     user_settings = get_user_settings(user_id)
     
@@ -215,12 +215,13 @@ async def show_settings_menu(event):
     target_names = {"en": "English 🇬🇧", "uk": "Українська 🇺🇦", "pl": "Polski 🇵🇱", "ru": "Русский 🇷🇺"}
     
     text = (
-        "⚙️ <b>Налаштування бота</b>\n\n"
+        "⚙️ <b>Налаштування</b>\n\n"
         f"🌐 <b>Мова розшифровки:</b> {lang_names.get(lang, lang)}\n"
         f"🔄 <b>Автопереклад:</b> {'✅ Увімкнено' if auto_translate else '❌ Вимкнено'}\n"
         f"🎯 <b>Мова перекладу:</b> {target_names.get(translate_to, translate_to)}\n"
     )
     
+    # ⚠️ ВАЖЛИВО: масив масивів [[Button, Button], [Button]]
     buttons = [
         [Button.inline("🌐 Мова розшифровки", b"menu_lang")],
         [Button.inline(f"🔄 Автопереклад: {'Вимкнути' if auto_translate else 'Увімкнути'}", b"toggle_translate")],
@@ -228,13 +229,12 @@ async def show_settings_menu(event):
         [Button.inline("❌ Закрити", b"close_menu")]
     ]
     
-    if hasattr(event, 'edit'):
-        try:
-            await event.edit(text, buttons=buttons, parse_mode='html')
-            return
-        except:
-            pass
-    await event.respond(text, buttons=buttons, parse_mode='html')
+    # Для /settings — відправляємо нове повідомлення
+    if hasattr(event, 'message') and event.message and event.message.text:
+        await event.respond(text, buttons=buttons, parse_mode='html')
+    # Для оновлення існуючого (з callback)
+    else:
+        await event.edit(text, buttons=buttons, parse_mode='html')
 
 async def handle_callback(event):
     """Обробка натискань кнопок"""
