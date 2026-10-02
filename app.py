@@ -8,8 +8,14 @@ import html
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events
 from telethon.sessions import StringSession
-from settings import get_user_settings, update_user_settings, DEFAULT_SETTINGS
-
+from settings import (
+    get_user_settings, 
+    update_user_settings, 
+    DEFAULT_SETTINGS,
+    add_auto_chat,
+    remove_auto_chat,
+    is_auto_chat
+)
 # ============================================
 # НАЛАШТУВАННЯ
 # ============================================
