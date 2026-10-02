@@ -10,7 +10,6 @@ from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
 from settings import get_user_settings, update_user_settings, DEFAULT_SETTINGS
 
-
 API_ID = int(os.getenv("API_ID", "0"))
 API_HASH = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
@@ -19,42 +18,29 @@ GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
 
 BOT_STATUS = "starting..."
 BOT_NAME = ""
-client = None
+client = None  # Глобальна змінна
 
+# === ДОПОМІЖНІ ФУНКЦІЇ ===
 def convert_to_wav(input_path, wav_path):
-    """Конвертація без таймауту для довгих аудіо"""
-    cmd = [
-        'ffmpeg', '-i', input_path,
-        '-ar', '16000', '-ac', '1',
-        '-y', wav_path
-    ]
+    cmd = ['ffmpeg', '-i', input_path, '-ar', '16000', '-ac', '1', '-y', wav_path]
     try:
-        # Без timeout — довгі аудіо потребують часу
         subprocess.run(cmd, check=True, capture_output=True)
         return True
-    except Exception as e:
-        print(f"❌ FFmpeg: {e}")
+    except:
         return False
 
 def split_audio(wav_path, chunk_minutes=5):
-    """Розбиває WAV на частини по N хвилин"""
     chunks = []
     base = wav_path.rsplit('.', 1)[0]
     chunk_seconds = chunk_minutes * 60
-    
     i = 0
     start = 0
     while True:
         chunk_path = f"{base}_part{i}.wav"
-        cmd = [
-            'ffmpeg', '-i', wav_path,
-            '-ss', str(start),
-            '-t', str(chunk_seconds),
-            '-ar', '16000', '-ac', '1',
-            '-y', chunk_path
-        ]
+        cmd = ['ffmpeg', '-i', wav_path, '-ss', str(start), '-t', str(chunk_seconds),
+               '-ar', '16000', '-ac', '1', '-y', chunk_path]
         try:
-            result = subprocess.run(cmd, check=True, capture_output=True)
+            subprocess.run(cmd, check=True, capture_output=True)
             if os.path.exists(chunk_path) and os.path.getsize(chunk_path) > 1000:
                 chunks.append(chunk_path)
                 start += chunk_seconds
@@ -65,34 +51,27 @@ def split_audio(wav_path, chunk_minutes=5):
                 break
         except:
             break
-    
     return chunks
 
 def transcribe_audio(audio_path):
-    """Розшифровка одного файлу через Groq"""
     try:
         with open(audio_path, 'rb') as f:
             response = requests.post(
                 'https://api.groq.com/openai/v1/audio/transcriptions',
                 headers={'Authorization': f'Bearer {GROQ_API_KEY}'},
                 files={'file': ('audio.wav', f, 'audio/wav')},
-                data={
-                    'model': 'whisper-large-v3',
-                    'language': 'uk',
-                    'response_format': 'text',
-                    'temperature': '0'
-                },
+                data={'model': 'whisper-large-v3', 'language': 'uk',
+                      'response_format': 'text', 'temperature': '0'},
                 timeout=120
             )
-        
         if response.status_code == 200:
             text = response.text.strip()
             return {"text": text, "success": bool(text)}
-        else:
-            return {"text": f"Помилка {response.status_code}", "success": False}
+        return {"text": f"Помилка {response.status_code}", "success": False}
     except Exception as e:
         return {"text": f"❌ {str(e)[:100]}", "success": False}
 
+# === ВЕБ-СЕРВЕР ===
 class Handler(BaseHTTPRequestHandler):
     def do_GET(self):
         self.send_response(200)
@@ -103,47 +82,38 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
     def log_message(self, *a): pass
 
+# === ОБРОБНИКИ ===
 async def handle_message(event):
     message = event.message
     user_id = message.sender_id
     user_settings = get_user_settings(user_id)
     
-    # Отримуємо налаштування користувача
     lang = user_settings.get('language', DEFAULT_SETTINGS['language'])
     auto_translate = user_settings.get('auto_translate', DEFAULT_SETTINGS['auto_translate'])
     translate_to = user_settings.get('translate_to', DEFAULT_SETTINGS['translate_to'])
     
-    # Перевірка: чи це відповідь на повідомлення
     if not message.is_reply:
-        await message.reply("❌ Будь ласка, використовуйте цю команду як відповідь на голосове повідомлення.")
+        await message.reply("❌ Використовуйте як відповідь на голосове повідомлення.")
         return
     
     replied = await message.get_reply_message()
-    
-    # Перевірка: чи це голосове/відео/аудіо
     if not (replied.voice or replied.video_note or replied.audio):
-        await message.reply("❌ Повідомлення, на яке ви відповіли, не є голосовим.")
+        await message.reply("❌ Це не голосове повідомлення.")
         return
     
-    # Визначаємо розширення
     ext = ".ogg" if replied.voice else (".mp4" if replied.video_note else ".mp3")
     
-    # Видаляємо команду .t
     try:
         await message.delete()
     except:
         pass
     
-    # Відправляємо статус як відповідь на голосове
-    status_msg = await replied.reply("⏳ Завантаження аудіо...")
-    
-    # Тимчасові файли
+    status_msg = await replied.reply("⏳ Завантаження...")
     tid = str(uuid.uuid4())
     inp = f"/tmp/{tid}{ext}"
     wav = f"/tmp/{tid}.wav"
     
     try:
-        # === ЕТАП 1: ЗАВАНТАЖЕННЯ З ПРОГРЕСОМ ===
         async def progress_callback(current, total):
             percent = (current / total) * 100
             try:
@@ -152,28 +122,20 @@ async def handle_message(event):
                 pass
         
         await client.download_media(replied, inp, progress_callback=progress_callback)
-        print("📥 Завантажено")
-        
-        # === ЕТАП 2: КОНВЕРТАЦІЯ ===
         await status_msg.edit("🔄 Конвертація...")
-        if not convert_to_wav(inp, wav):
-            await status_msg.edit("❌ Помилка конвертації аудіо")
-            return
-        print("🔄 Конвертовано")
         
-        # === ЕТАП 3: РОЗШИФРОВКА ===
+        if not convert_to_wav(inp, wav):
+            await status_msg.edit("❌ Помилка конвертації")
+            return
+        
         wav_size_mb = os.path.getsize(wav) / (1024 * 1024)
         all_text = []
         
         if wav_size_mb > 20:
-            # Розбиваємо на частини
-            await status_msg.edit("✂️ Розбиваю на частини...")
-            chunks = split_audio(wav, chunk_minutes=5)
-            total_chunks = len(chunks)
-            print(f"📦 Частин: {total_chunks}")
-            
+            await status_msg.edit("✂️ Розбиваю...")
+            chunks = split_audio(wav, 5)
             for i, chunk in enumerate(chunks):
-                await status_msg.edit(f"🎙 Розшифровка... {i+1}/{total_chunks}")
+                await status_msg.edit(f"🎙 {i+1}/{len(chunks)}")
                 r = transcribe_audio(chunk)
                 if r.get("success"):
                     all_text.append(r["text"])
@@ -182,39 +144,29 @@ async def handle_message(event):
             await status_msg.edit("🎙 Розшифровка...")
             r = transcribe_audio(wav)
             if not r.get("success"):
-                await status_msg.edit(f"❌ {r.get('text', 'Не вдалося')}")
+                await status_msg.edit(f"❌ {r.get('text')}")
                 return
             all_text.append(r["text"])
         
         full_text = " ".join(all_text).strip()
-        
         if not full_text:
             await status_msg.edit("❌ Порожній результат")
             return
         
-        print(f"✅ Розшифровано: {full_text[:80]}...")
-        
-        # === ЕТАП 4: ПЕРЕКЛАД (якщо увімкнено) ===
+        # Переклад
         translated_text = None
         if auto_translate:
-            await status_msg.edit(f"🌍 Перекладаю на {translate_to}...")
+            await status_msg.edit(f"🌍 Переклад...")
             try:
-                from googletrans import Translator
-                translator = Translator()
-                translation = translator.translate(full_text, dest=translate_to)
-                translated_text = translation.text
-                print(f"✅ Перекладено: {translated_text[:80]}...")
+                from deep_translator import GoogleTranslator
+                translated_text = GoogleTranslator(source='auto', target=translate_to).translate(full_text)
             except Exception as e:
-                print(f"❌ Помилка перекладу: {e}")
-                translated_text = None
+                print(f"❌ Переклад: {e}")
         
-        # === ЕТАП 5: ФОРМУВАННЯ РЕЗУЛЬТАТУ ===
-        # Екрануємо HTML-символи
+        # Формування
         safe_original = html.escape(full_text)
-        
-        # Назви мов
         lang_names = {"uk": "🇺🇦 Українська", "en": "🇬🇧 English", "ru": "🇷🇺 Русский"}
-        target_names = {"uk": "🇺🇦 Українська", "en": "🇬🇧 English", "ru": "🇷🇺 Русский", "pl": "🇵🇱 Polski"}
+        target_names = {"uk": "🇺🇦", "en": "🇬🇧", "ru": "🇷🇺", "pl": "🇵🇱"}
         
         if translated_text:
             safe_translation = html.escape(translated_text)
@@ -230,37 +182,28 @@ async def handle_message(event):
                 f"<blockquote expandable>{safe_original}</blockquote>"
             )
         
-        # === ЕТАП 6: ВІДПРАВКА ЯК ВІДПОВІДЬ НА ГОЛОСОВЕ ===
         await status_msg.delete()
         
         if len(final_text) > 4000:
-            # Розбиваємо на частини
-            parts = [final_text[i:i+4000] for i in range(0, len(final_text), 4000)]
-            for part in parts:
-                await replied.reply(part, parse_mode='html')
+            for i in range(0, len(final_text), 4000):
+                await replied.reply(final_text[i:i+4000], parse_mode='html')
         else:
             await replied.reply(final_text, parse_mode='html')
         
-        print("📤 Відправлено")
-        
     except Exception as e:
-        print(f"❌ Помилка: {e}")
+        print(f"❌ {e}")
         try:
-            await status_msg.edit(f"❌ Помилка: {str(e)[:100]}")
+            await status_msg.edit(f"❌ Помилка")
         except:
             pass
     finally:
-        # Очищення тимчасових файлів
         for p in [inp, wav]:
             if os.path.exists(p):
-                try:
-                    os.remove(p)
-                except:
-                    pass
+                try: os.remove(p)
+                except: pass
 
-@client.on(events.NewMessage(pattern='/settings'))
 async def show_settings_menu(event):
-    """Показує меню налаштувань."""
+    """Показує меню налаштувань"""
     user_id = event.sender_id
     user_settings = get_user_settings(user_id)
     
@@ -269,27 +212,32 @@ async def show_settings_menu(event):
     translate_to = user_settings.get('translate_to', DEFAULT_SETTINGS['translate_to'])
     
     lang_names = {"uk": "Українська 🇺🇦", "en": "English 🇬🇧", "ru": "Русский 🇷🇺"}
-    target_lang_names = {"en": "English 🇬🇧", "uk": "Українська 🇺🇦", "pl": "Polski 🇵🇱"}
+    target_names = {"en": "English 🇬🇧", "uk": "Українська 🇺🇦", "pl": "Polski 🇵🇱", "ru": "Русский 🇷🇺"}
     
     text = (
-        "⚙️ **Налаштування бота**\n\n"
-        f"🌐 **Мова розшифровки:** {lang_names.get(lang, lang)}\n"
-        f"🔄 **Автопереклад:** {'✅ Увімкнено' if auto_translate else '❌ Вимкнено'}\n"
-        f"🎯 **Мова перекладу:** {target_lang_names.get(translate_to, translate_to)}\n"
+        "⚙️ <b>Налаштування бота</b>\n\n"
+        f"🌐 <b>Мова розшифровки:</b> {lang_names.get(lang, lang)}\n"
+        f"🔄 <b>Автопереклад:</b> {'✅ Увімкнено' if auto_translate else '❌ Вимкнено'}\n"
+        f"🎯 <b>Мова перекладу:</b> {target_names.get(translate_to, translate_to)}\n"
     )
     
     buttons = [
-        [Button.inline("🌐 Змінити мову розшифровки", b"menu_lang")],
+        [Button.inline("🌐 Мова розшифровки", b"menu_lang")],
         [Button.inline(f"🔄 Автопереклад: {'Вимкнути' if auto_translate else 'Увімкнути'}", b"toggle_translate")],
-        [Button.inline("🎯 Змінити мову перекладу", b"menu_target_lang")],
+        [Button.inline("🎯 Мова перекладу", b"menu_target_lang")],
         [Button.inline("❌ Закрити", b"close_menu")]
     ]
     
-    await event.respond(text, buttons=buttons, parse_mode='markdown')
+    if hasattr(event, 'edit'):
+        try:
+            await event.edit(text, buttons=buttons, parse_mode='html')
+            return
+        except:
+            pass
+    await event.respond(text, buttons=buttons, parse_mode='html')
 
-@client.on(events.CallbackQuery())
-async def handle_settings_callback(event):
-    """Обробляє натискання кнопок у меню."""
+async def handle_callback(event):
+    """Обробка натискань кнопок"""
     data = event.data.decode('utf-8')
     user_id = event.sender_id
     
@@ -300,19 +248,19 @@ async def handle_settings_callback(event):
             [Button.inline("🇷🇺 Русский", b"set_lang_ru")],
             [Button.inline("⬅️ Назад", b"back_to_menu")]
         ]
-        await event.edit("Оберіть мову для розшифровки:", buttons=buttons)
+        await event.edit("Оберіть мову розшифровки:", buttons=buttons)
     
     elif data.startswith("set_lang_"):
         lang = data.replace("set_lang_", "")
         update_user_settings(user_id, {"language": lang})
-        await event.answer(f"✅ Мову змінено на {lang}", alert=True)
-        await show_settings_menu(event) # Оновлюємо меню
+        await event.answer("✅ Збережено")
+        await show_settings_menu(event)
     
     elif data == "toggle_translate":
-        user_settings = get_user_settings(user_id)
-        current = user_settings.get('auto_translate', DEFAULT_SETTINGS['auto_translate'])
+        s = get_user_settings(user_id)
+        current = s.get('auto_translate', False)
         update_user_settings(user_id, {"auto_translate": not current})
-        await event.answer("✅ Налаштування оновлено", alert=True)
+        await event.answer("✅ Збережено")
         await show_settings_menu(event)
     
     elif data == "menu_target_lang":
@@ -320,6 +268,7 @@ async def handle_settings_callback(event):
             [Button.inline("🇬🇧 English", b"set_target_en")],
             [Button.inline("🇺🇦 Українська", b"set_target_uk")],
             [Button.inline("🇵🇱 Polski", b"set_target_pl")],
+            [Button.inline("🇷🇺 Русский", b"set_target_ru")],
             [Button.inline("⬅️ Назад", b"back_to_menu")]
         ]
         await event.edit("Оберіть мову перекладу:", buttons=buttons)
@@ -327,7 +276,7 @@ async def handle_settings_callback(event):
     elif data.startswith("set_target_"):
         lang = data.replace("set_target_", "")
         update_user_settings(user_id, {"translate_to": lang})
-        await event.answer(f"✅ Мову перекладу змінено", alert=True)
+        await event.answer("✅ Збережено")
         await show_settings_menu(event)
     
     elif data == "back_to_menu":
@@ -336,15 +285,41 @@ async def handle_settings_callback(event):
     elif data == "close_menu":
         await event.delete()
     
-    await event.answer() # Важливо для припинення "завантаження" на кнопці[reference:3]
+    else:
+        await event.answer()
 
+# === ЗАПУСК БОТА ===
 async def run_bot():
     global client, BOT_STATUS, BOT_NAME
+    
     BOT_STATUS = "запуск..."
+    
+    # СТВОРЮЄМО КЛІЄНТ ПЕРЕД РЕЄСТРАЦІЄЮ ОБРОБНИКІВ
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     
+    # ТЕПЕР РЕЄСТРУЄМО ОБРОБНИКИ
     @client.on(events.NewMessage(pattern=r'^\.(t|р|s|transcribe|розшифруй|short)$'))
-    async def h(e): await handle_message(e)
+    async def handler_msg(e):
+        await handle_message(e)
+    
+    @client.on(events.NewMessage(pattern=r'^/settings$'))
+    async def handler_settings(e):
+        await show_settings_menu(e)
+    
+    @client.on(events.NewMessage(pattern=r'^/start$'))
+    async def handler_start(e):
+        await e.respond(
+            "🎙 <b>Voice Transcriber Bot</b>\n\n"
+            "📋 <b>Як користуватись:</b>\n"
+            "• Відповідайте <code>.t</code> на голосове — отримаєте текст\n"
+            "• <code>/settings</code> — налаштування\n\n"
+            "⚙️ Підтримка: автопереклад, вибір мови, згортання тексту",
+            parse_mode='html'
+        )
+    
+    @client.on(events.CallbackQuery())
+    async def handler_callback(e):
+        await handle_callback(e)
     
     await client.start()
     me = await client.get_me()
@@ -358,6 +333,7 @@ def start_bot():
     asyncio.set_event_loop(loop)
     loop.run_until_complete(run_bot())
 
+# === MAIN ===
 if __name__ == "__main__":
     threading.Thread(target=start_bot, daemon=True).start()
     srv = HTTPServer(('0.0.0.0', PORT), Handler)
