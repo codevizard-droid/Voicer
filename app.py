@@ -4,6 +4,7 @@ import asyncio
 import subprocess
 import threading
 import requests
+import html
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from telethon import TelegramClient, events, Button
 from telethon.sessions import StringSession
@@ -104,89 +105,158 @@ class Handler(BaseHTTPRequestHandler):
 
 async def handle_message(event):
     message = event.message
-    print(f"📨 {message.text}")
+    user_id = message.sender_id
+    user_settings = get_user_settings(user_id)
     
+    # Отримуємо налаштування користувача
+    lang = user_settings.get('language', DEFAULT_SETTINGS['language'])
+    auto_translate = user_settings.get('auto_translate', DEFAULT_SETTINGS['auto_translate'])
+    translate_to = user_settings.get('translate_to', DEFAULT_SETTINGS['translate_to'])
+    
+    # Перевірка: чи це відповідь на повідомлення
     if not message.is_reply:
-        await message.reply("❌ Відповідайте на голосове")
+        await message.reply("❌ Будь ласка, використовуйте цю команду як відповідь на голосове повідомлення.")
         return
     
     replied = await message.get_reply_message()
     
+    # Перевірка: чи це голосове/відео/аудіо
     if not (replied.voice or replied.video_note or replied.audio):
-        await message.reply("❌ Не голосове")
+        await message.reply("❌ Повідомлення, на яке ви відповіли, не є голосовим.")
         return
     
+    # Визначаємо розширення
     ext = ".ogg" if replied.voice else (".mp4" if replied.video_note else ".mp3")
-    status = await message.reply("🎙 Розшифровую...")
-    try: await message.delete()
-    except: pass
     
+    # Видаляємо команду .t
+    try:
+        await message.delete()
+    except:
+        pass
+    
+    # Відправляємо статус як відповідь на голосове
+    status_msg = await replied.reply("⏳ Завантаження аудіо...")
+    
+    # Тимчасові файли
     tid = str(uuid.uuid4())
     inp = f"/tmp/{tid}{ext}"
     wav = f"/tmp/{tid}.wav"
     
     try:
-        # Завантажуємо
-        print("📥 Завантаження...")
-        await client.download_media(replied, inp)
-        size_mb = os.path.getsize(inp) / (1024 * 1024)
-        print(f"📁 Розмір: {size_mb:.1f} MB")
+        # === ЕТАП 1: ЗАВАНТАЖЕННЯ З ПРОГРЕСОМ ===
+        async def progress_callback(current, total):
+            percent = (current / total) * 100
+            try:
+                await status_msg.edit(f"⏳ Завантаження... {percent:.0f}%")
+            except:
+                pass
         
-        # Конвертуємо
-        print("🔄 Конвертація...")
+        await client.download_media(replied, inp, progress_callback=progress_callback)
+        print("📥 Завантажено")
+        
+        # === ЕТАП 2: КОНВЕРТАЦІЯ ===
+        await status_msg.edit("🔄 Конвертація...")
         if not convert_to_wav(inp, wav):
-            await status.edit("❌ Помилка конвертації")
+            await status_msg.edit("❌ Помилка конвертації аудіо")
             return
+        print("🔄 Конвертовано")
         
-        # Перевіряємо розмір
-        wav_size = os.path.getsize(wav) / (1024 * 1024)
-        print(f"📁 WAV: {wav_size:.1f} MB")
+        # === ЕТАП 3: РОЗШИФРОВКА ===
+        wav_size_mb = os.path.getsize(wav) / (1024 * 1024)
+        all_text = []
         
-        # Якщо > 20 MB — розбиваємо
-        if wav_size > 20:
-            print("✂️ Розбиваємо на частини...")
-            await status.edit("✂️ Розбиваю на частини...")
-            
+        if wav_size_mb > 20:
+            # Розбиваємо на частини
+            await status_msg.edit("✂️ Розбиваю на частини...")
             chunks = split_audio(wav, chunk_minutes=5)
-            print(f"📦 Частин: {len(chunks)}")
+            total_chunks = len(chunks)
+            print(f"📦 Частин: {total_chunks}")
             
-            all_text = []
             for i, chunk in enumerate(chunks):
-                await status.edit(f"🎙 Частина {i+1}/{len(chunks)}...")
+                await status_msg.edit(f"🎙 Розшифровка... {i+1}/{total_chunks}")
                 r = transcribe_audio(chunk)
                 if r.get("success"):
                     all_text.append(r["text"])
                 os.remove(chunk)
-            
-            full_text = " ".join(all_text)
         else:
-            # Одна частина
+            await status_msg.edit("🎙 Розшифровка...")
             r = transcribe_audio(wav)
             if not r.get("success"):
-                await status.edit(f"❌ {r.get('text', 'Не вдалося')}")
+                await status_msg.edit(f"❌ {r.get('text', 'Не вдалося')}")
                 return
-            full_text = r["text"]
+            all_text.append(r["text"])
         
-        # Відправляємо результат
-        if full_text:
-            if len(full_text) > 4000:
-                await status.delete()
-                await message.respond(f"📝 {full_text[:4000]}")
-                for i in range(4000, len(full_text), 4000):
-                    await message.respond(full_text[i:i+4000])
-            else:
-                await status.edit(f"📝 {full_text}")
+        full_text = " ".join(all_text).strip()
+        
+        if not full_text:
+            await status_msg.edit("❌ Порожній результат")
+            return
+        
+        print(f"✅ Розшифровано: {full_text[:80]}...")
+        
+        # === ЕТАП 4: ПЕРЕКЛАД (якщо увімкнено) ===
+        translated_text = None
+        if auto_translate:
+            await status_msg.edit(f"🌍 Перекладаю на {translate_to}...")
+            try:
+                from googletrans import Translator
+                translator = Translator()
+                translation = translator.translate(full_text, dest=translate_to)
+                translated_text = translation.text
+                print(f"✅ Перекладено: {translated_text[:80]}...")
+            except Exception as e:
+                print(f"❌ Помилка перекладу: {e}")
+                translated_text = None
+        
+        # === ЕТАП 5: ФОРМУВАННЯ РЕЗУЛЬТАТУ ===
+        # Екрануємо HTML-символи
+        safe_original = html.escape(full_text)
+        
+        # Назви мов
+        lang_names = {"uk": "🇺🇦 Українська", "en": "🇬🇧 English", "ru": "🇷🇺 Русский"}
+        target_names = {"uk": "🇺🇦 Українська", "en": "🇬🇧 English", "ru": "🇷🇺 Русский", "pl": "🇵🇱 Polski"}
+        
+        if translated_text:
+            safe_translation = html.escape(translated_text)
+            final_text = (
+                f"📝 <b>Розшифровка ({lang_names.get(lang, lang)}):</b>\n"
+                f"<blockquote expandable>{safe_original}</blockquote>\n\n"
+                f"🌍 <b>Переклад ({target_names.get(translate_to, translate_to)}):</b>\n"
+                f"<blockquote expandable>{safe_translation}</blockquote>"
+            )
         else:
-            await status.edit("❌ Порожній результат")
-            
+            final_text = (
+                f"📝 <b>Розшифровка ({lang_names.get(lang, lang)}):</b>\n"
+                f"<blockquote expandable>{safe_original}</blockquote>"
+            )
+        
+        # === ЕТАП 6: ВІДПРАВКА ЯК ВІДПОВІДЬ НА ГОЛОСОВЕ ===
+        await status_msg.delete()
+        
+        if len(final_text) > 4000:
+            # Розбиваємо на частини
+            parts = [final_text[i:i+4000] for i in range(0, len(final_text), 4000)]
+            for part in parts:
+                await replied.reply(part, parse_mode='html')
+        else:
+            await replied.reply(final_text, parse_mode='html')
+        
+        print("📤 Відправлено")
+        
     except Exception as e:
-        print(f"❌ {e}")
-        await status.edit(f"❌ Помилка")
+        print(f"❌ Помилка: {e}")
+        try:
+            await status_msg.edit(f"❌ Помилка: {str(e)[:100]}")
+        except:
+            pass
     finally:
+        # Очищення тимчасових файлів
         for p in [inp, wav]:
             if os.path.exists(p):
-                try: os.remove(p)
-                except: pass
+                try:
+                    os.remove(p)
+                except:
+                    pass
 
 @client.on(events.NewMessage(pattern='/settings'))
 async def show_settings_menu(event):
