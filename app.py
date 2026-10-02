@@ -384,14 +384,220 @@ async def handle_settings_command(event):
         return
 
 # ============================================
+# АВТОТРАНСКРИПЦІЯ
+# ============================================
+async def handle_auto_transcribe(event):
+    """Автоматична транскрипція вхідних голосових у дозволених чатах"""
+    message = event.message
+    
+    # Ігноруємо власні повідомлення
+    if message.out:
+        return
+    
+    # Тільки голосові/відео/аудіо
+    if not (message.voice or message.video_note or message.audio):
+        return
+    
+    # Перевіряємо, чи чат у списку
+    chat_id = message.chat_id
+    sender_id = message.sender_id
+    
+    # Отримуємо налаштування власника бота (вас)
+    me = await client.get_me()
+    my_id = me.id
+    
+    if not is_auto_chat(my_id, chat_id):
+        return
+    
+    print(f"🤖 Автотранскрипція чату {chat_id}")
+    
+    # Обробляємо як звичайну транскрипцію
+    await process_auto_audio(message)
+
+
+async def process_auto_audio(message):
+    """Обробляє аудіо автоматично"""
+    ext = ".ogg" if message.voice else (".mp4" if message.video_note else ".mp3")
+    
+    status_msg = await message.reply("🤖 Автотранскрипція...")
+    
+    tid = str(uuid.uuid4())
+    inp = f"/tmp/{tid}{ext}"
+    wav = f"/tmp/{tid}.wav"
+    
+    # Отримуємо налаштування власника
+    me = await client.get_me()
+    user_settings = get_user_settings(me.id)
+    lang = user_settings.get('language', 'uk')
+    auto_translate = user_settings.get('auto_translate', False)
+    translate_to = user_settings.get('translate_to', 'en')
+    
+    try:
+        # Завантаження
+        await client.download_media(message, inp)
+        await status_msg.edit("🔄 Конвертація...")
+        
+        if not convert_to_wav(inp, wav):
+            await status_msg.edit("❌ Помилка конвертації")
+            return
+        
+        # Розшифровка
+        wav_size_mb = os.path.getsize(wav) / (1024 * 1024)
+        all_text = []
+        
+        if wav_size_mb > 20:
+            chunks = split_audio(wav, 5)
+            for i, chunk in enumerate(chunks):
+                await status_msg.edit(f"🎙 {i+1}/{len(chunks)}")
+                r = transcribe_audio(chunk, language=lang)
+                if r.get("success"):
+                    all_text.append(r["text"])
+                os.remove(chunk)
+        else:
+            await status_msg.edit("🎙 Розшифровка...")
+            r = transcribe_audio(wav, language=lang)
+            if not r.get("success"):
+                await status_msg.edit(f"❌ {r.get('text')}")
+                return
+            all_text.append(r["text"])
+        
+        full_text = " ".join(all_text).strip()
+        if not full_text:
+            await status_msg.edit("❌ Порожній результат")
+            return
+        
+        # Переклад
+        translated_text = None
+        if auto_translate:
+            await status_msg.edit("🌍 Переклад...")
+            try:
+                from deep_translator import GoogleTranslator
+                translated_text = GoogleTranslator(source='auto', target=translate_to).translate(full_text)
+            except Exception as e:
+                print(f"❌ Переклад: {e}")
+        
+        # Формування
+        safe_original = html.escape(full_text)
+        lang_names = {"uk": "🇺🇦", "en": "🇬🇧", "ru": "🇷🇺"}
+        target_names = {"uk": "🇺🇦", "en": "🇬🇧", "ru": "🇷🇺", "pl": "🇵🇱"}
+        
+        if translated_text:
+            safe_translation = html.escape(translated_text)
+            final_text = (
+                f"🤖 <b>Автотранскрипція {lang_names.get(lang, '')}:</b>\n"
+                f"<blockquote expandable>{safe_original}</blockquote>\n\n"
+                f"🌍 <b>Переклад {target_names.get(translate_to, '')}:</b>\n"
+                f"<blockquote expandable>{safe_translation}</blockquote>"
+            )
+        else:
+            final_text = (
+                f"🤖 <b>Автотранскрипція {lang_names.get(lang, '')}:</b>\n"
+                f"<blockquote expandable>{safe_original}</blockquote>"
+            )
+        
+        await status_msg.delete()
+        
+        if len(final_text) > 4000:
+            for i in range(0, len(final_text), 4000):
+                await message.reply(final_text[i:i+4000], parse_mode='html')
+        else:
+            await message.reply(final_text, parse_mode='html')
+        
+        print("📤 Автовідправлено")
+        
+    except Exception as e:
+        print(f"❌ Авто-помилка: {e}")
+        try:
+            await status_msg.edit(f"❌ Помилка")
+        except:
+            pass
+    finally:
+        for p in [inp, wav]:
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except:
+                    pass
+
+
+# ============================================
+# КОМАНДИ +ЧАТ / -ЧАТ
+# ============================================
+async def handle_chat_commands(event):
+    """Обробляє +чат та -чат"""
+    text = event.message.text.strip()
+    me = await client.get_me()
+    
+    # +чат — додати поточний чат
+    if text.lower() == '+чат':
+        chat_id = event.chat_id
+        chat_title = "цей чат"
+        
+        # Спробуємо отримати назву чату
+        try:
+            chat = await event.get_chat()
+            if hasattr(chat, 'title') and chat.title:
+                chat_title = chat.title
+            elif hasattr(chat, 'first_name') and chat.first_name:
+                chat_title = chat.first_name
+        except:
+            pass
+        
+        added = add_auto_chat(me.id, chat_id)
+        if added:
+            await event.respond(f"✅ Чат «{chat_title}» додано до автоперекладу")
+        else:
+            await event.respond(f"⚠️ Чат «{chat_title}» вже у списку")
+        
+        try: await event.message.delete()
+        except: pass
+        return
+    
+    # -чат — видалити поточний чат
+    if text.lower() == '-чат':
+        chat_id = event.chat_id
+        removed = remove_auto_chat(me.id, chat_id)
+        if removed:
+            await event.respond("❌ Чат видалено з автоперекладу")
+        else:
+            await event.respond("⚠️ Цей чат не був у списку")
+        
+        try: await event.message.delete()
+        except: pass
+        return
+    
+    # /авточати — показати список
+    if text.lower() == '/авточати':
+        settings = get_user_settings(me.id)
+        auto_chats = settings.get('auto_chats', [])
+        
+        if not auto_chats:
+            await event.respond("📋 Список автотранскрипції порожній")
+            try: await event.message.delete()
+            except: pass
+            return
+        
+        text_response = "📋 <b>Чати з автоперекладом:</b>\n\n"
+        for i, cid in enumerate(auto_chats, 1):
+            try:
+                chat = await client.get_entity(cid)
+                title = getattr(chat, 'title', None) or getattr(chat, 'first_name', str(cid))
+                text_response += f"{i}. {title}\n"
+            except:
+                text_response += f"{i}. ID: {cid}\n"
+        
+        await event.respond(text_response, parse_mode='html')
+        try: await event.message.delete()
+        except: pass
+        return
+
+# ============================================
 # ЗАПУСК БОТА
 # ============================================
 async def run_bot():
     global client, BOT_STATUS, BOT_NAME
     
     BOT_STATUS = "запуск..."
-    
-    # Створюємо клієнт ДО реєстрації обробників
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     
     # Транскрипція
@@ -402,14 +608,25 @@ async def run_bot():
     # Меню налаштувань
     @client.on(events.NewMessage(pattern=r'^/settings$'))
     async def handler_settings(e):
-        print(f"⚙️ /settings від {e.sender_id}")
         await show_settings_menu(e)
     
     # Команди налаштувань
     @client.on(events.NewMessage(pattern=r'^/(lang_(uk|en|ru)|translate_(on|off)|target_(en|uk|pl|ru)|status)$'))
     async def handler_settings_commands(e):
-        print(f"⚙️ Команда: {e.message.text}")
         await handle_settings_command(e)
+    
+    # ⚡ НОВЕ: команди +чат / -чат / /авточати
+    @client.on(events.NewMessage(pattern=r'^(\+чат|-чат|/авточати)$'))
+    async def handler_chat_commands(e):
+        print(f"📋 Команда: {e.message.text}")
+        await handle_chat_commands(e)
+    
+    # ⚡ НОВЕ: автотранскрипція всіх вхідних голосових
+    @client.on(events.NewMessage(incoming=True))
+    async def handler_auto(e):
+        # Перевіряємо, чи це медіа
+        if e.message.voice or e.message.video_note or e.message.audio:
+            await handle_auto_transcribe(e)
     
     # Старт
     @client.on(events.NewMessage(pattern=r'^/start$'))
@@ -419,11 +636,10 @@ async def run_bot():
             "📋 <b>Як користуватись:</b>\n"
             "• Відповідайте <code>.t</code> на голосове — отримаєте текст\n"
             "• <code>/settings</code> — налаштування\n\n"
-            "⚙️ <b>Швидкі команди:</b>\n"
-            "<code>/status</code> — ваші налаштування\n"
-            "<code>/translate_on</code> / <code>/translate_off</code> — автопереклад\n"
-            "<code>/lang_uk</code> — мова розшифровки\n"
-            "<code>/target_en</code> — мова перекладу",
+            "🤖 <b>Автотранскрипція:</b>\n"
+            "• <code>+чат</code> — додати поточний чат до автоперекладу\n"
+            "• <code>-чат</code> — видалити чат\n"
+            "• <code>/авточати</code> — список чатів\n",
             parse_mode='html'
         )
         try: await e.message.delete()
