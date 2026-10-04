@@ -130,7 +130,8 @@ async def handle_message(event):
     user_id = message.sender_id
     user_settings = get_user_settings(user_id)
     
-    lang = user_settings.get('language', DEFAULT_SETTINGS['language'])
+    mode = user_settings.get('language_mode', 'auto')
+    lang_param = None if mode == 'auto' else mode
     auto_translate = user_settings.get('auto_translate', DEFAULT_SETTINGS['auto_translate'])
     translate_to = user_settings.get('translate_to', DEFAULT_SETTINGS['translate_to'])
     
@@ -185,13 +186,13 @@ async def handle_message(event):
             
             for i, chunk in enumerate(chunks):
                 await status_msg.edit(f"🎙 Розшифровка... {i+1}/{total}")
-                r = transcribe_audio(chunk, language=lang)
+                r = transcribe_audio(chunk, language=lang_param)
                 if r.get("success"):
                     all_text.append(r["text"])
                 os.remove(chunk)
         else:
             await status_msg.edit("🎙 Розшифровка...")
-            r = transcribe_audio(wav, language=lang)
+            r = transcribe_audio(chunk, language=lang_param)
             if not r.get("success"):
                 await status_msg.edit(f"❌ {r.get('text', 'Не вдалося')}")
                 return
@@ -320,83 +321,95 @@ async def handle_settings_command(event):
     user_id = event.sender_id
     text = event.message.text.strip().lower()
     
-    if text == '/lang_uk':
-        update_user_settings(user_id, {"language": "uk"})
-        await event.respond("✅ Мову розшифровки змінено на 🇺🇦 Українська")
+    # === TRANSCRIPTION MODE ===
+    if text == '/auto':
+        update_user_settings(user_id, {"language_mode": "auto"})
+        await event.respond("✅ Mode: 🎯 Auto-detect")
         try: await event.message.delete()
         except: pass
         return
     
     if text == '/lang_en':
-        update_user_settings(user_id, {"language": "en"})
-        await event.respond("✅ Мову розшифровки змінено на 🇬🇧 English")
+        update_user_settings(user_id, {"language_mode": "en"})
+        await event.respond("✅ Mode: 🇬🇧 English")
+        try: await event.message.delete()
+        except: pass
+        return
+    
+    if text == '/lang_uk':
+        update_user_settings(user_id, {"language_mode": "uk"})
+        await event.respond("✅ Mode: 🇺🇦 Ukrainian")
         try: await event.message.delete()
         except: pass
         return
     
     if text == '/lang_ru':
-        update_user_settings(user_id, {"language": "ru"})
-        await event.respond("✅ Мову розшифровки змінено на 🇷🇺 Русский")
+        update_user_settings(user_id, {"language_mode": "ru"})
+        await event.respond("✅ Mode: Russian")
         try: await event.message.delete()
         except: pass
         return
     
-    if text == '/translate_on':
+    # === TRANSLATION ON/OFF ===
+    if text == '/tr_on':
         update_user_settings(user_id, {"auto_translate": True})
-        await event.respond("✅ Автопереклад увімкнено")
+        await event.respond("✅ Auto-translation: ON")
         try: await event.message.delete()
         except: pass
         return
     
-    if text == '/translate_off':
+    if text == '/tr_off':
         update_user_settings(user_id, {"auto_translate": False})
-        await event.respond("✅ Автопереклад вимкнено")
+        await event.respond("✅ Auto-translation: OFF")
         try: await event.message.delete()
         except: pass
         return
     
-    if text == '/target_en':
+    # === TARGET LANGUAGE ===
+    if text == '/to_en':
         update_user_settings(user_id, {"translate_to": "en"})
-        await event.respond("✅ Мову перекладу змінено на 🇬🇧 English")
+        await event.respond("✅ Target: 🇬🇧 English")
         try: await event.message.delete()
         except: pass
         return
     
-    if text == '/target_uk':
+    if text == '/to_uk':
         update_user_settings(user_id, {"translate_to": "uk"})
-        await event.respond("✅ Мову перекладу змінено на 🇺🇦 Українська")
+        await event.respond("✅ Target: 🇺🇦 Ukrainian")
         try: await event.message.delete()
         except: pass
         return
     
-    if text == '/target_pl':
-        update_user_settings(user_id, {"translate_to": "pl"})
-        await event.respond("✅ Мову перекладу змінено на 🇵🇱 Polski")
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    if text == '/target_ru':
+    if text == '/to_ru':
         update_user_settings(user_id, {"translate_to": "ru"})
-        await event.respond("✅ Мову перекладу змінено на 🇷🇺 Русский")
+        await event.respond("✅ Target: Russian")
         try: await event.message.delete()
         except: pass
         return
     
+    # === STATUS ===
     if text == '/status':
         s = get_user_settings(user_id)
-        lang = s.get('language', 'uk')
+        mode = s.get('language_mode', 'auto')
         auto = s.get('auto_translate', False)
         target = s.get('translate_to', 'en')
         auto_chats = s.get('auto_chats', [])
         
-        lang_names = {"uk": "🇺🇦 Українська", "en": "🇬🇧 English", "ru": "🇷🇺 Русский"}
-        target_names = {"en": "🇬🇧 English", "uk": "🇺🇦 Українська",
-                       "pl": "🇵🇱 Polski", "ru": "🇷🇺 Русский"}
+        mode_names = {
+            "auto": "🎯 Auto-detect",
+            "uk": "🇺🇦 Ukrainian",
+            "en": "🇬🇧 English",
+            "ru": "Russian"
+        }
+        target_names = {
+            "en": "🇬🇧 English",
+            "uk": "🇺🇦 Ukrainian",
+            "ru": "Russian"
+        }
         
         chats_text = ""
         if auto_chats:
-            chats_text = f"\n🤖 <b>Автотранскрипція у чатах ({len(auto_chats)}):</b>\n"
+            chats_text = f"\n\n🤖 <b>Auto-transcription ({len(auto_chats)}):</b>\n"
             for i, cid in enumerate(auto_chats, 1):
                 try:
                     chat = await client.get_entity(cid)
@@ -405,29 +418,23 @@ async def handle_settings_command(event):
                         title = title[:30] + "..."
                     chats_text += f"   {i}. {title}\n"
                 except:
-                    chats_text += f"   {i}. <i>ID {cid} (недоступно)</i>\n"
+                    chats_text += f"   {i}. <i>ID {cid}</i>\n"
         else:
-            chats_text = "\n🤖 <b>Автотранскрипція:</b> вимкнена\n   Додайте чат командою <code>+чат</code>"
+            chats_text = "\n\n🤖 <b>Auto-transcription:</b> off"
         
         text_response = (
-            "📊 <b>Повний статус бота</b>\n"
+            "📊 <b>Status</b>\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            "\n🎙 <b>ТРАНСКРИПЦІЯ:</b>\n"
-            f"   • Мова: {lang_names.get(lang, lang)}\n"
-            f"   • Команда: <code>.t</code>\n"
-            "\n🌍 <b>ПЕРЕКЛАД:</b>\n"
-            f"   • Автопереклад: {'✅ Увімкнено' if auto else '❌ Вимкнено'}\n"
-            f"   • Мова: {target_names.get(target, target)}\n"
+            "🎙 <b>TRANSCRIPTION</b>\n"
+            f"   • Mode: {mode_names.get(mode, mode)}\n\n"
+            "🌍 <b>TRANSLATION</b>\n"
+            f"   • Auto: {'✅ ON' if auto else '❌ OFF'}\n"
+            f"   • Target: {target_names.get(target, target)}"
             f"{chats_text}\n"
-            "\n🤖 <b>СИСТЕМА:</b>\n"
-            "   • Бот: ✅ Онлайн\n"
-            "   • Модель: Whisper Large v3\n"
-            "   • Перекладач: Google Translate\n"
-            "\n━━━━━━━━━━━━━━━━━━━━\n"
-            "💡 <b>Команди:</b>\n"
-            "<code>/settings</code> — меню\n"
-            "<code>+чат</code> / <code>-чат</code> — чати\n"
-            "<code>/авточати</code> — список"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🤖 <b>System</b>\n"
+            "   • Model: Whisper Large v3\n"
+            "   • Translator: Deepl Translate"
         )
         
         await event.respond(text_response, parse_mode='html')
@@ -489,13 +496,13 @@ async def process_auto_audio(message):
             chunks = split_audio(wav, 5)
             for i, chunk in enumerate(chunks):
                 await status_msg.edit(f"🎙 {i+1}/{len(chunks)}")
-                r = transcribe_audio(chunk, language=lang)
+                r = transcribe_audio(chunk, language=lang_param)
                 if r.get("success"):
                     all_text.append(r["text"])
                 os.remove(chunk)
         else:
             await status_msg.edit("🎙 Розшифровка...")
-            r = transcribe_audio(wav, language=lang)
+            r = transcribe_audio(chunk, language=lang_param)
             if not r.get("success"):
                 await status_msg.edit(f"❌ {r.get('text')}")
                 return
@@ -565,9 +572,9 @@ async def handle_chat_commands(event):
     text = event.message.text.strip()
     me = await client.get_me()
     
-    if text.lower() == '+чат':
+    if text.lower() == '+chat':
         chat_id = event.chat_id
-        chat_title = "цей чат"
+        chat_title = "this chat"
         
         try:
             chat = await event.get_chat()
@@ -580,37 +587,37 @@ async def handle_chat_commands(event):
         
         added = add_auto_chat(me.id, chat_id)
         if added:
-            await event.respond(f"✅ Чат «{chat_title}» додано до автоперекладу")
+            await event.respond(f"✅ Chat «{chat_title}» added to auto-transcription")
         else:
-            await event.respond(f"⚠️ Чат «{chat_title}» вже у списку")
+            await event.respond(f"⚠️ Chat «{chat_title}» already in list")
         
         try: await event.message.delete()
         except: pass
         return
     
-    if text.lower() == '-чат':
+    if text.lower() == '-chat':
         chat_id = event.chat_id
         removed = remove_auto_chat(me.id, chat_id)
         if removed:
-            await event.respond("❌ Чат видалено з автоперекладу")
+            await event.respond("❌ Chat removed from auto-transcription")
         else:
-            await event.respond("⚠️ Цей чат не був у списку")
+            await event.respond("⚠️ This chat was not in list")
         
         try: await event.message.delete()
         except: pass
         return
     
-    if text.lower() == '/авточати':
+    if text.lower() == '/chats':
         settings = get_user_settings(me.id)
         auto_chats = settings.get('auto_chats', [])
         
         if not auto_chats:
-            await event.respond("📋 Список автотранскрипції порожній")
+            await event.respond("📋 Auto-transcription list is empty")
             try: await event.message.delete()
             except: pass
             return
         
-        text_response = "📋 <b>Чати з автоперекладом:</b>\n\n"
+        text_response = "📋 <b>Auto-transcription chats:</b>\n\n"
         for i, cid in enumerate(auto_chats, 1):
             try:
                 chat = await client.get_entity(cid)
@@ -673,7 +680,7 @@ async def run_bot():
     
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
     
-    @client.on(events.NewMessage(pattern=r'^\.(t|р|s|transcribe|розшифруй|short)$'))
+    @client.on(events.NewMessage(pattern=r'^\.(р|т|t)$'))
     async def handler_msg(e):
         await handle_message(e)
     
@@ -682,12 +689,12 @@ async def run_bot():
         print(f"⚙️ /settings від {e.sender_id}")
         await show_settings_menu(e)
     
-    @client.on(events.NewMessage(pattern=r'^/(lang_(uk|en|ru)|translate_(on|off)|target_(en|uk|pl|ru)|status)$'))
+    @client.on(events.NewMessage(pattern=r'^/(auto|lang_(en|uk|ru)|tr_(on|off)|to_(en|uk|ru)|status)$'))
     async def handler_settings_commands(e):
         print(f"⚙️ Команда: {e.message.text}")
         await handle_settings_command(e)
     
-    @client.on(events.NewMessage(pattern=r'^(\+чат|-чат|/авточати)$'))
+    @client.on(events.NewMessage(pattern=r'^(\+chat|-chat|/chats)$'))
     async def handler_chat_commands(e):
         print(f"📋 Команда: {e.message.text}")
         await handle_chat_commands(e)
@@ -697,7 +704,7 @@ async def run_bot():
         if e.message.voice or e.message.video_note or e.message.audio:
             await handle_auto_transcribe(e)
 
-    @client.on(events.NewMessage(pattern=r'^\.(п|переклад|translate)$'))
+    @client.on(events.NewMessage(pattern=r'^\.(п|p)$'))
     async def handler_translate(e):
         await handle_translate_command(e)
     
@@ -705,13 +712,12 @@ async def run_bot():
     async def handler_start(e):
         await e.respond(
             "🎙 <b>Voice Transcriber Bot</b>\n\n"
-            "📋 <b>Як користуватись:</b>\n"
-            "• Відповідайте <code>.t, .р</code> на голосове — отримаєте текст\n"
-            "• <code>/settings</code> — налаштування\n\n"
-            "🤖 <b>Автотранскрипція:</b>\n"
-            "• <code>+чат</code> — додати чат\n"
-            "• <code>-чат</code> — видалити чат\n"
-            "• <code>/авточати</code> — список\n",
+            "📋 <b>Команди:</b>\n"
+            "• <code>.р</code> — транскрибувати голосове\n"
+            "• <code>.п</code> — перекласти текст\n"
+            "• <code>/settings</code> — налаштування\n"
+            "• <code>+chat</code> — автотранскрипція в чаті\n\n"
+            "🎯 За замовчуванням мова визначається автоматично.",
             parse_mode='html'
         )
         try: await e.message.delete()
