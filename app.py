@@ -70,27 +70,38 @@ def split_audio(wav_path, chunk_minutes=5):
     return chunks
 
 
-def transcribe_audio(audio_path):
-    """Розшифровка через Groq API з авто-визначенням мови"""
+def transcribe_audio(audio_path, language=None):
+    """Розшифровка через Groq API з авто-визначенням мови.
+    language=None — автоматичне визначення.
+    language='uk' — примусово українська.
+    """
     try:
         with open(audio_path, 'rb') as f:
+            data = {
+                'model': 'whisper-large-v3',
+                'response_format': 'verbose_json',
+                'temperature': '0'
+            }
+            if language:
+                data['language'] = language
+            
             response = requests.post(
                 'https://api.groq.com/openai/v1/audio/transcriptions',
                 headers={'Authorization': f'Bearer {GROQ_API_KEY}'},
                 files={'file': ('audio.wav', f, 'audio/wav')},
-                data={
-                    'model': 'whisper-large-v3',
-                    # language НЕ вказуємо — авто-визначення
-                    'response_format': 'verbose_json',  # отримуємо мову
-                    'temperature': '0'
-                },
+                data=data,
                 timeout=120
             )
+        
         if response.status_code == 200:
-            data = response.json()
-            text = data.get('text', '').strip()
-            detected_lang = data.get('language', 'uk')  # визначена мова
-            return {"text": text, "language": detected_lang, "success": bool(text)}
+            result = response.json()
+            text = result.get('text', '').strip()
+            detected = result.get('language', language or 'uk')
+            return {
+                "text": text,
+                "language": detected,
+                "success": bool(text)
+            }
         return {"text": f"Помилка {response.status_code}", "success": False}
     except Exception as e:
         return {"text": f"❌ {str(e)[:100]}", "success": False}
