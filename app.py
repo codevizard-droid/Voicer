@@ -132,8 +132,8 @@ async def handle_message(event):
     
     mode = user_settings.get('language_mode', 'auto')
     lang_param = None if mode == 'auto' else mode
-    auto_translate = user_settings.get('auto_translate', DEFAULT_SETTINGS['auto_translate'])
-    translate_to = user_settings.get('translate_to', DEFAULT_SETTINGS['translate_to'])
+    auto_translate = user_settings.get('auto_translate', False)
+    translate_to = user_settings.get('translate_to', 'en')
     
     if not message.is_reply:
         await message.reply("❌ Використовуйте команду як відповідь на голосове повідомлення.")
@@ -159,6 +159,7 @@ async def handle_message(event):
     wav = f"/tmp/{tid}.wav"
     
     try:
+        # === ЗАВАНТАЖЕННЯ ===
         async def progress_callback(current, total):
             percent = (current / total) * 100
             try:
@@ -169,14 +170,17 @@ async def handle_message(event):
         await client.download_media(replied, inp, progress_callback=progress_callback)
         print(f"📥 Завантажено: {inp}")
         
+        # === КОНВЕРТАЦІЯ ===
         await status_msg.edit("🔄 Конвертація...")
         if not convert_to_wav(inp, wav):
             await status_msg.edit("❌ Помилка конвертації")
             return
         print("🔄 Конвертовано")
         
+        # === РОЗШИФРОВКА ===
         wav_size_mb = os.path.getsize(wav) / (1024 * 1024)
         all_text = []
+        detected_lang = None
         
         if wav_size_mb > 20:
             await status_msg.edit("✂️ Розбиваю на частини...")
@@ -189,14 +193,20 @@ async def handle_message(event):
                 r = transcribe_audio(chunk, language=lang_param)
                 if r.get("success"):
                     all_text.append(r["text"])
-                os.remove(chunk)
+                    if not detected_lang:
+                        detected_lang = r.get("language")
+                try:
+                    os.remove(chunk)
+                except:
+                    pass
         else:
             await status_msg.edit("🎙 Розшифровка...")
-            r = transcribe_audio(chunk, language=lang_param)
+            r = transcribe_audio(wav, language=lang_param)
             if not r.get("success"):
                 await status_msg.edit(f"❌ {r.get('text', 'Не вдалося')}")
                 return
             all_text.append(r["text"])
+            detected_lang = r.get("language")
         
         full_text = " ".join(all_text).strip()
         if not full_text:
@@ -205,6 +215,7 @@ async def handle_message(event):
         
         print(f"✅ Розшифровано: {full_text[:80]}...")
         
+        # === ПЕРЕКЛАД ===
         translated_text = None
         if auto_translate:
             await status_msg.edit(f"🌍 Перекладаю на {translate_to}...")
@@ -216,25 +227,41 @@ async def handle_message(event):
                 print(f"❌ Помилка перекладу: {e}")
                 translated_text = None
         
+        # === ФОРМУВАННЯ ===
         safe_original = html.escape(full_text)
-        lang_names = {"uk": "🇺🇦 Українська", "en": "🇬🇧 English", "ru": "🇷🇺 Русский"}
-        target_names = {"uk": "🇺🇦 Українська", "en": "🇬🇧 English",
-                       "ru": "🇷🇺 Русский", "pl": "🇵🇱 Polski"}
+        
+        # Назви мов
+        lang_display = {
+            "uk": "🇺🇦 Ukrainian",
+            "en": "🇬🇧 English",
+            "ru": "Russian",
+            "pl": "🇵🇱 Polish",
+            "de": "🇩🇪 German",
+            "fr": "🇫🇷 French",
+            "es": "🇪🇸 Spanish",
+            "it": "🇮🇹 Italian",
+        }
+        
+        # Визначена або примусова мова
+        display_lang = detected_lang or mode
+        lang_label = lang_display.get(display_lang, display_lang.upper() if display_lang else "?")
         
         if translated_text:
             safe_translation = html.escape(translated_text)
+            target_label = lang_display.get(translate_to, translate_to.upper())
             final_text = (
-                f"📝 <b>Розшифровка ({lang_names.get(lang, lang)}):</b>\n"
-                f"**>{safe_original}\n\n"
-                f"🌍 <b>Переклад ({target_names.get(translate_to, translate_to)}):</b>\n"
-                f"**>{safe_translation}"
+                f"📝 <b>Розшифровка ({lang_label}):</b>\n"
+                f"<blockquote expandable>{safe_original}</blockquote>\n\n"
+                f"🌍 <b>Переклад ({target_label}):</b>\n"
+                f"<blockquote expandable>{safe_translation}</blockquote>"
             )
         else:
             final_text = (
-                f"📝 <b>Розшифровка ({lang_names.get(lang, lang)}):</b>\n"
-                f"**>{safe_original}"
+                f"📝 <b>Розшифровка ({lang_label}):</b>\n"
+                f"<blockquote expandable>{safe_original}</blockquote>"
             )
         
+        # === ВІДПРАВКА ===
         await status_msg.delete()
         
         if len(final_text) > 4000:
