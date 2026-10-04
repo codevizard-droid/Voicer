@@ -267,38 +267,45 @@ async def show_settings_menu(event):
     user_id = event.sender_id
     user_settings = get_user_settings(user_id)
     
-    lang = user_settings.get('language', DEFAULT_SETTINGS['language'])
-    auto_translate = user_settings.get('auto_translate', DEFAULT_SETTINGS['auto_translate'])
-    translate_to = user_settings.get('translate_to', DEFAULT_SETTINGS['translate_to'])
+    mode = user_settings.get('language_mode', 'auto')
+    auto_translate = user_settings.get('auto_translate', False)
+    translate_to = user_settings.get('translate_to', 'en')
     
-    lang_names = {"uk": "🇺🇦 Українська", "en": "🇬🇧 English", "ru": "🇷🇺 Русский"}
-    target_names = {"en": "🇬🇧 English", "uk": "🇺🇦 Українська",
-                   "pl": "🇵🇱 Polski", "ru": "🇷🇺 Русский"}
+    mode_names = {
+        "auto": "🎯 Auto-detect",
+        "uk": "🇺🇦 Ukrainian",
+        "en": "🇬🇧 English",
+        "ru": "Russian"
+    }
+    target_names = {
+        "en": "🇬🇧 English",
+        "uk": "🇺🇦 Ukrainian",
+        "ru": "Russian"
+    }
     
     text = (
-        "⚙️ <b>Налаштування</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n"
-        f"🌐 <b>Мова розшифровки:</b> {lang_names.get(lang, lang)}\n"
-        f"🔄 <b>Автопереклад:</b> {'✅ Увімкнено' if auto_translate else '❌ Вимкнено'}\n"
-        f"🎯 <b>Мова перекладу:</b> {target_names.get(translate_to, translate_to)}\n"
+        "⚙️ <b>Settings</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "📝 <b>Команди для зміни:</b>\n\n"
-        "🌐 <b>Мова розшифровки:</b>\n"
-        "<code>/lang_uk</code> — 🇺🇦 Українська\n"
+        "🎙 <b>TRANSCRIPTION MODE</b>\n"
+        f"   • {mode_names.get(mode, mode)}\n\n"
+        "🌍 <b>TRANSLATION</b>\n"
+        f"   • {'✅ Enabled' if auto_translate else '❌ Disabled'}\n"
+        f"   • Target: {target_names.get(translate_to, translate_to)}\n"
+        "━━━━━━━━━━━━━━━━━━━━\n\n"
+        "🎙 <b>Transcription mode:</b>\n"
+        "<code>/auto</code> — auto-detect\n"
         "<code>/lang_en</code> — 🇬🇧 English\n"
-        "<code>/lang_ru</code> — 🇷🇺 Русский\n\n"
-        "🔄 <b>Автопереклад:</b>\n"
-        "<code>/translate_on</code> — Увімкнути\n"
-        "<code>/translate_off</code> — Вимкнути\n\n"
-        "🎯 <b>Мова перекладу:</b>\n"
-        "<code>/target_en</code> — 🇬🇧 English\n"
-        "<code>/target_uk</code> — 🇺🇦 Українська\n"
-        "<code>/target_pl</code> — 🇵🇱 Polski\n"
-        "<code>/target_ru</code> — 🇷🇺 Русский\n\n"
-        "🤖 <b>Автотранскрипція:</b>\n"
-        "<code>+чат</code> — додати цей чат\n"
-        "<code>-чат</code> — видалити цей чат\n"
-        "<code>/авточати</code> — список чатів"
+        "<code>/lang_uk</code> — 🇺🇦 Ukrainian\n"
+        "<code>/lang_ru</code> — Russian\n\n"
+        "🌍 <b>Translation:</b>\n"
+        "<code>/tr_on</code> / <code>/tr_off</code>\n"
+        "<code>/to_en</code> — 🇬🇧 English\n"
+        "<code>/to_uk</code> — 🇺🇦 Ukrainian\n"
+        "<code>/to_ru</code> — Russian\n\n"
+        "🤖 <b>Auto-transcription:</b>\n"
+        "<code>+chat</code> — add chat\n"
+        "<code>-chat</code> — remove chat\n"
+        "<code>/chats</code> — list"
     )
     
     try:
