@@ -70,8 +70,8 @@ def split_audio(wav_path, chunk_minutes=5):
     return chunks
 
 
-def transcribe_audio(audio_path, language="uk"):
-    """Розшифровка через Groq API"""
+def transcribe_audio(audio_path):
+    """Розшифровка через Groq API з авто-визначенням мови"""
     try:
         with open(audio_path, 'rb') as f:
             response = requests.post(
@@ -80,15 +80,17 @@ def transcribe_audio(audio_path, language="uk"):
                 files={'file': ('audio.wav', f, 'audio/wav')},
                 data={
                     'model': 'whisper-large-v3',
-                    'language': language,
-                    'response_format': 'text',
+                    # language НЕ вказуємо — авто-визначення
+                    'response_format': 'verbose_json',  # отримуємо мову
                     'temperature': '0'
                 },
                 timeout=120
             )
         if response.status_code == 200:
-            text = response.text.strip()
-            return {"text": text, "success": bool(text)}
+            data = response.json()
+            text = data.get('text', '').strip()
+            detected_lang = data.get('language', 'uk')  # визначена мова
+            return {"text": text, "language": detected_lang, "success": bool(text)}
         return {"text": f"Помилка {response.status_code}", "success": False}
     except Exception as e:
         return {"text": f"❌ {str(e)[:100]}", "success": False}
@@ -211,14 +213,14 @@ async def handle_message(event):
             safe_translation = html.escape(translated_text)
             final_text = (
                 f"📝 <b>Розшифровка ({lang_names.get(lang, lang)}):</b>\n"
-                f"<blockquote expandable>{safe_original}</blockquote>\n\n"
+                f"**>{safe_original}\n\n"
                 f"🌍 <b>Переклад ({target_names.get(translate_to, translate_to)}):</b>\n"
-                f"<blockquote expandable>{safe_translation}</blockquote>"
+                f"**>{safe_translation}"
             )
         else:
             final_text = (
                 f"📝 <b>Розшифровка ({lang_names.get(lang, lang)}):</b>\n"
-                f"<blockquote expandable>{safe_original}</blockquote>"
+                f"**>{safe_original}"
             )
         
         await status_msg.delete()
@@ -263,7 +265,7 @@ async def show_settings_menu(event):
                    "pl": "🇵🇱 Polski", "ru": "🇷🇺 Русский"}
     
     text = (
-        "⚙️ <b>Налаштування бота</b>\n"
+        "⚙️ <b>Налаштування</b>\n"
         "━━━━━━━━━━━━━━━━━━━━\n"
         f"🌐 <b>Мова розшифровки:</b> {lang_names.get(lang, lang)}\n"
         f"🔄 <b>Автопереклад:</b> {'✅ Увімкнено' if auto_translate else '❌ Вимкнено'}\n"
@@ -503,14 +505,14 @@ async def process_auto_audio(message):
             safe_translation = html.escape(translated_text)
             final_text = (
                 f"🤖 <b>Автотранскрипція {lang_names.get(lang, '')}:</b>\n"
-                f"<blockquote expandable>{safe_original}</blockquote>\n\n"
+                f"**>{safe_original}\n\n"
                 f"🌍 <b>Переклад {target_names.get(translate_to, '')}:</b>\n"
-                f"<blockquote expandable>{safe_translation}</blockquote>"
+                f"**>{safe_translation}"
             )
         else:
             final_text = (
                 f"🤖 <b>Автотранскрипція {lang_names.get(lang, '')}:</b>\n"
-                f"<blockquote expandable>{safe_original}</blockquote>"
+                f"**>{safe_original}"
             )
         
         await status_msg.delete()
@@ -604,6 +606,44 @@ async def handle_chat_commands(event):
         except: pass
         return
 
+async def handle_translate_command(event):
+    """Перекладає текст у відповіді"""
+    message = event.message
+    
+    if not message.is_reply:
+        await message.reply("❌ Відповідайте на текстове повідомлення.")
+        return
+    
+    replied = await message.get_reply_message()
+    text_to_translate = replied.text or replied.message
+    
+    if not text_to_translate:
+        await message.reply("❌ Повідомлення порожнє.")
+        return
+    
+    user_id = message.sender_id
+    user_settings = get_user_settings(user_id)
+    translate_to = user_settings.get('translate_to', 'en')
+    
+    status = await message.reply("🌍 Перекладаю...")
+    
+    try:
+        from deep_translator import GoogleTranslator
+        translated = GoogleTranslator(source='auto', target=translate_to).translate(text_to_translate)
+        
+        target_names = {"en": "🇬🇧 English", "uk": "🇺🇦 Українська", 
+                       "pl": "🇵🇱 Polski", "ru": "🇷🇺 Русский"}
+        
+        await status.edit(
+            f"🌍 <b>Переклад ({target_names.get(translate_to, translate_to)}):</b>\n"
+            f"<blockquote expandable>{html.escape(translated)}</blockquote>",
+            parse_mode='html'
+        )
+    except Exception as e:
+        await status.edit(f"❌ Помилка перекладу: {str(e)[:100]}")
+    
+    try: await message.delete()
+    except: pass
 
 # ============================================
 # ЗАПУСК БОТА
@@ -638,13 +678,17 @@ async def run_bot():
     async def handler_auto(e):
         if e.message.voice or e.message.video_note or e.message.audio:
             await handle_auto_transcribe(e)
+
+    @client.on(events.NewMessage(pattern=r'^\.(п|переклад|translate)$'))
+    async def handler_translate(e):
+        await handle_translate_command(e)
     
     @client.on(events.NewMessage(pattern=r'^/start$'))
     async def handler_start(e):
         await e.respond(
             "🎙 <b>Voice Transcriber Bot</b>\n\n"
             "📋 <b>Як користуватись:</b>\n"
-            "• Відповідайте <code>.t</code> на голосове — отримаєте текст\n"
+            "• Відповідайте <code>.t, .р</code> на голосове — отримаєте текст\n"
             "• <code>/settings</code> — налаштування\n\n"
             "🤖 <b>Автотранскрипція:</b>\n"
             "• <code>+чат</code> — додати чат\n"
