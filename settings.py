@@ -6,10 +6,10 @@ SETTINGS_FILE = 'user_settings.json'
 _lock = Lock()
 
 DEFAULT_SETTINGS = {
-    "language": "uk",
+    "language_mode": "auto",     # "auto", "uk", "en", "ru"
     "auto_translate": False,
     "translate_to": "en",
-    "auto_chats": []  # список ID чатів для автотранскрипції
+    "auto_chats": []
 }
 
 def load_settings():
