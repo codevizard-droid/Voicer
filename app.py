@@ -504,7 +504,8 @@ async def process_auto_audio(message):
     
     me = await client.get_me()
     user_settings = get_user_settings(me.id)
-    lang = user_settings.get('language', 'uk')
+    mode = user_settings.get('language_mode', 'auto')
+    lang_param = None if mode == 'auto' else mode
     auto_translate = user_settings.get('auto_translate', False)
     translate_to = user_settings.get('translate_to', 'en')
     
@@ -518,22 +519,32 @@ async def process_auto_audio(message):
         
         wav_size_mb = os.path.getsize(wav) / (1024 * 1024)
         all_text = []
+        detected_lang = None
         
         if wav_size_mb > 20:
             chunks = split_audio(wav, 5)
+            total = len(chunks)
+            print(f"📦 Частин: {total}")
+            
             for i, chunk in enumerate(chunks):
-                await status_msg.edit(f"🎙 {i+1}/{len(chunks)}")
+                await status_msg.edit(f"🎙 {i+1}/{total}")
                 r = transcribe_audio(chunk, language=lang_param)
                 if r.get("success"):
                     all_text.append(r["text"])
-                os.remove(chunk)
+                    if not detected_lang:
+                        detected_lang = r.get("language")
+                try:
+                    os.remove(chunk)
+                except:
+                    pass
         else:
             await status_msg.edit("🎙 Розшифровка...")
-            r = transcribe_audio(chunk, language=lang_param)
+            r = transcribe_audio(wav, language=lang_param)
             if not r.get("success"):
                 await status_msg.edit(f"❌ {r.get('text')}")
                 return
             all_text.append(r["text"])
+            detected_lang = r.get("language")
         
         full_text = " ".join(all_text).strip()
         if not full_text:
@@ -550,21 +561,23 @@ async def process_auto_audio(message):
                 print(f"❌ Переклад: {e}")
         
         safe_original = html.escape(full_text)
-        lang_names = {"uk": "🇺🇦", "en": "🇬🇧", "ru": "🇷🇺"}
-        target_names = {"uk": "🇺🇦", "en": "🇬🇧", "ru": "🇷🇺", "pl": "🇵🇱"}
+        lang_display = {"uk": "🇺🇦", "en": "🇬🇧", "ru": "Russian", "pl": "🇵🇱"}
+        display_lang = detected_lang or mode
+        lang_label = lang_display.get(display_lang, display_lang.upper())
         
         if translated_text:
             safe_translation = html.escape(translated_text)
+            target_label = lang_display.get(translate_to, translate_to.upper())
             final_text = (
-                f"🤖 <b>Автотранскрипція {lang_names.get(lang, '')}:</b>\n"
-                f"**>{safe_original}\n\n"
-                f"🌍 <b>Переклад {target_names.get(translate_to, '')}:</b>\n"
-                f"**>{safe_translation}"
+                f"🤖 <b>Автотранскрипція ({lang_label}):</b>\n"
+                f"<blockquote expandable>{safe_original}</blockquote>\n\n"
+                f"🌍 <b>Переклад ({target_label}):</b>\n"
+                f"<blockquote expandable>{safe_translation}</blockquote>"
             )
         else:
             final_text = (
-                f"🤖 <b>Автотранскрипція {lang_names.get(lang, '')}:</b>\n"
-                f"**>{safe_original}"
+                f"🤖 <b>Автотранскрипція ({lang_label}):</b>\n"
+                f"<blockquote expandable>{safe_original}</blockquote>"
             )
         
         await status_msg.delete()
