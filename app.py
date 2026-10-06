@@ -271,10 +271,7 @@ async def handle_message(event):
                 print(f"✅ Перекладено: {translated_text[:80]}...")
         
         # === ФОРМУВАННЯ ===
-        def escape_md(text):
-            return text.replace("\\", "\\\\").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`").replace("[", "\\[").replace("]", "\\]")
-        
-        safe_original = escape_md(full_text)
+        safe_original = html.escape(full_text)
         
         lang_display = {
             "uk": "🇺🇦 Ukrainian",
@@ -284,25 +281,24 @@ async def handle_message(event):
             "de": "🇩🇪 German",
             "fr": "🇫🇷 French",
             "es": "🇪🇸 Spanish",
-            "it": "🇮🇹 Italian",
         }
         
         display_lang = detected_lang or mode
         lang_label = lang_display.get(display_lang, display_lang.upper() if display_lang else "?")
         
         if translated_text:
-            safe_translation = escape_md(translated_text)
+            safe_translation = html.escape(translated_text)
             target_label = lang_display.get(translate_to, translate_to.upper())
             final_text = (
-                f"📝 **Розшифровка ({lang_label}):**\n"
-                f"**> {safe_original}\n\n"
-                f"🌍 **Переклад ({target_label}):**\n"
-                f"**> {safe_translation}\n"
+                f"📝 <b>Розшифровка ({lang_label}):</b>\n"
+                f"<blockquote expandable>{safe_original}</blockquote>\n\n"
+                f"🌍 <b>Переклад ({target_label}):</b>\n"
+                f"<blockquote expandable>{safe_translation}</blockquote>"
             )
         else:
             final_text = (
-                f"📝 **Розшифровка ({lang_label}):**\n"
-                f"**> {safe_original}\n"
+                f"📝 <b>Розшифровка ({lang_label}):</b>\n"
+                f"<blockquote expandable>{safe_original}</blockquote>"
             )
         
         await status_msg.delete()
@@ -310,26 +306,9 @@ async def handle_message(event):
         if len(final_text) > 4000:
             parts = [final_text[i:i+4000] for i in range(0, len(final_text), 4000)]
             for part in parts:
-                await replied.reply(part, parse_mode='markdown')
+                await replied.reply(part, parse_mode='html')
         else:
-            await replied.reply(final_text, parse_mode='markdown')
-        
-        print("📤 Відправлено")
-        
-    except Exception as e:
-        print(f"❌ Помилка: {e}")
-        try:
-            await status_msg.edit(f"❌ Помилка: {str(e)[:100]}")
-        except:
-            pass
-    finally:
-        for p in [inp, wav]:
-            if os.path.exists(p):
-                try:
-                    os.remove(p)
-                except:
-                    pass
-
+            await replied.reply(final_text, parse_mode='html')
 
 # ============================================
 # МЕНЮ НАЛАШТУВАНЬ
