@@ -317,7 +317,7 @@ async def handle_message(event):
         try:
             await status_msg.edit(f"❌ Помилка: {str(e)[:100]}")
         except:
-            pass:
+            pass
     finally:
         for p in [inp, wav]:
             if os.path.exists(p):
