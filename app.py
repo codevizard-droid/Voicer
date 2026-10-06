@@ -132,6 +132,8 @@ def translate_text(text, target_lang):
     target_name = lang_names.get(target_lang, target_lang)
     
     try:
+        print(f"🌍 Запит перекладу: {len(text)} символів → {target_name}")
+        
         response = requests.post(
             'https://api.groq.com/openai/v1/chat/completions',
             headers={
@@ -143,7 +145,7 @@ def translate_text(text, target_lang):
                 'messages': [
                     {
                         'role': 'system',
-                        'content': f'You are a professional translator. Translate the user text to {target_name}. Return ONLY the translation, without any explanations, notes, or quotation marks.'
+                        'content': f'Translate to {target_name}. Return ONLY the translation.'
                     },
                     {
                         'role': 'user',
@@ -156,14 +158,18 @@ def translate_text(text, target_lang):
             timeout=60
         )
         
+        print(f"📡 Groq відповідь: {response.status_code}")
+        
         if response.status_code == 200:
             result = response.json()
-            return result['choices'][0]['message']['content'].strip()
+            translated = result['choices'][0]['message']['content'].strip()
+            print(f"✅ Отримано переклад: {translated[:80]}...")
+            return translated
         else:
-            print(f"❌ Groq translate: {response.status_code} {response.text[:200]}")
+            print(f"❌ Groq помилка {response.status_code}: {response.text[:300]}")
             return None
     except Exception as e:
-        print(f"❌ Помилка перекладу: {e}")
+        print(f"❌ Exception: {e}")
         return None
 
 # ============================================
