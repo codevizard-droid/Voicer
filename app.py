@@ -122,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 def translate_text(text, target_lang):
-    """Переклад через Groq LLM (Llama 3.3 70B)"""
+    """Переклад через Groq LLM"""
     lang_names = {
         "en": "English",
         "uk": "Ukrainian",
@@ -132,8 +132,6 @@ def translate_text(text, target_lang):
     target_name = lang_names.get(target_lang, target_lang)
     
     try:
-        print(f"🌍 Запит перекладу: {len(text)} символів → {target_name}")
-        
         response = requests.post(
             'https://api.groq.com/openai/v1/chat/completions',
             headers={
@@ -158,19 +156,14 @@ def translate_text(text, target_lang):
             timeout=60
         )
         
-        print(f"📡 Groq відповідь: {response.status_code}")
-        
         if response.status_code == 200:
             result = response.json()
-            translated = result['choices'][0]['message']['content'].strip()
-            print(f"✅ Отримано переклад: {translated[:80]}...")
-            return translated
+            return result['choices'][0]['message']['content'].strip()
         else:
-            print(f"❌ Groq помилка {response.status_code}: {response.text[:300]}")
-            return None
+            # Повертаємо помилку як текст, щоб побачити її в чаті
+            return f"[ERROR {response.status_code}]: {response.text[:200]}"
     except Exception as e:
-        print(f"❌ Exception: {e}")
-        return None
+        return f"[EXCEPTION]: {str(e)[:200]}"
 
 # ============================================
 # ОБРОБНИК ТРАНСКРИПЦІЇ (відповідь .t)
