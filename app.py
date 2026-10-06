@@ -262,9 +262,9 @@ async def handle_message(event):
         # === ПЕРЕКЛАД ===
         translated_text = None
         if auto_translate:
-    await status_msg.edit(f"🌍 Перекладаю на {translate_to}...")
-    translated_text = translate_text(full_text, translate_to)
-        
+            await status_msg.edit(f"🌍 Перекладаю на {translate_to}...")
+            translated_text = translate_text(full_text, translate_to)
+    
         # === ФОРМУВАННЯ ===
         safe_original = html.escape(full_text)
         
@@ -591,8 +591,8 @@ async def process_auto_audio(message):
         
         translated_text = None
         if auto_translate:
-    await status_msg.edit("🌍 Переклад...")
-    translated_text = translate_text(full_text, translate_to)
+            await status_msg.edit("🌍 Переклад...")
+            translated_text = translate_text(full_text, translate_to)
         
         safe_original = html.escape(full_text)
         lang_display = {"uk": "🇺🇦", "en": "🇬🇧", "ru": "Russian", "pl": "🇵🇱"}
