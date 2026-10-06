@@ -198,7 +198,7 @@ def translate_text(text, target_lang):
                     }
                 ],
                 'temperature': 0.3,
-                'max_tokens': 4000
+                'max_tokens': max_out
             },
             timeout=60
         )
