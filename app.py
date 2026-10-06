@@ -121,6 +121,50 @@ class Handler(BaseHTTPRequestHandler):
     def log_message(self, *a):
         pass
 
+def translate_text(text, target_lang):
+    """Переклад через Groq LLM (Llama 3.3 70B)"""
+    lang_names = {
+        "en": "English",
+        "uk": "Ukrainian",
+        "ru": "Russian",
+        "pl": "Polish"
+    }
+    target_name = lang_names.get(target_lang, target_lang)
+    
+    try:
+        response = requests.post(
+            'https://api.groq.com/openai/v1/chat/completions',
+            headers={
+                'Authorization': f'Bearer {GROQ_API_KEY}',
+                'Content-Type': 'application/json'
+            },
+            json={
+                'model': 'llama-3.3-70b-versatile',
+                'messages': [
+                    {
+                        'role': 'system',
+                        'content': f'You are a professional translator. Translate the user text to {target_name}. Return ONLY the translation, without any explanations, notes, or quotation marks.'
+                    },
+                    {
+                        'role': 'user',
+                        'content': text
+                    }
+                ],
+                'temperature': 0.3,
+                'max_tokens': 4000
+            },
+            timeout=60
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result['choices'][0]['message']['content'].strip()
+        else:
+            print(f"❌ Groq translate: {response.status_code}")
+            return None
+    except Exception as e:
+        print(f"❌ Помилка перекладу: {e}")
+        return None
 
 # ============================================
 # ОБРОБНИК ТРАНСКРИПЦІЇ (відповідь .t)
@@ -218,14 +262,8 @@ async def handle_message(event):
         # === ПЕРЕКЛАД ===
         translated_text = None
         if auto_translate:
-            await status_msg.edit(f"🌍 Перекладаю на {translate_to}...")
-            try:
-                from deep_translator import GoogleTranslator
-                translated_text = GoogleTranslator(source='auto', target=translate_to).translate(full_text)
-                print(f"✅ Перекладено: {translated_text[:80]}...")
-            except Exception as e:
-                print(f"❌ Помилка перекладу: {e}")
-                translated_text = None
+    await status_msg.edit(f"🌍 Перекладаю на {translate_to}...")
+    translated_text = translate_text(full_text, translate_to)
         
         # === ФОРМУВАННЯ ===
         safe_original = html.escape(full_text)
@@ -553,12 +591,8 @@ async def process_auto_audio(message):
         
         translated_text = None
         if auto_translate:
-            await status_msg.edit("🌍 Переклад...")
-            try:
-                from deep_translator import GoogleTranslator
-                translated_text = GoogleTranslator(source='auto', target=translate_to).translate(full_text)
-            except Exception as e:
-                print(f"❌ Переклад: {e}")
+    await status_msg.edit("🌍 Переклад...")
+    translated_text = translate_text(full_text, translate_to)
         
         safe_original = html.escape(full_text)
         lang_display = {"uk": "🇺🇦", "en": "🇬🇧", "ru": "Russian", "pl": "🇵🇱"}
