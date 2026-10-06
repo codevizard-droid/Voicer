@@ -309,6 +309,22 @@ async def handle_message(event):
                 await replied.reply(part, parse_mode='html')
         else:
             await replied.reply(final_text, parse_mode='html')
+    
+        print("📤 Відправлено")
+    
+    except Exception as e:
+        print(f"❌ Помилка: {e}")
+        try:
+            await status_msg.edit(f"❌ Помилка: {str(e)[:100]}")
+        except:
+            pass:
+    finally:
+        for p in [inp, wav]:
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except:
+                    pass
 
 # ============================================
 # МЕНЮ НАЛАШТУВАНЬ
