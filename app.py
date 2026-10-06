@@ -122,7 +122,7 @@ class Handler(BaseHTTPRequestHandler):
         pass
 
 def translate_text(text, target_lang):
-    """Переклад через Groq LLM з авто-вибором моделі"""
+    """Переклад через Groq LLM (GPT-OSS 120B)"""
     lang_names = {
         "en": "English",
         "uk": "Ukrainian",
@@ -131,54 +131,9 @@ def translate_text(text, target_lang):
     }
     target_name = lang_names.get(target_lang, target_lang)
     
-    # Моделі в порядку пріоритету
-    candidate_models = [
-        "llama-3.3-70b-versatile",
-        "llama-3.1-70b-versatile",
-        "llama-3.1-8b-instant",
-        "llama3-70b-8192",
-        "llama3-8b-8192",
-        "mixtral-8x7b-32768",
-        "gemma2-9b-it",
-    ]
-    
-    # Спочатку — отримуємо список доступних моделей
     try:
-        models_response = requests.get(
-            'https://api.groq.com/openai/v1/models',
-            headers={'Authorization': f'Bearer {GROQ_API_KEY}'},
-            timeout=10
-        )
-        if models_response.status_code == 200:
-            available = [m['id'] for m in models_response.json().get('data', [])]
-            print(f"📋 Доступні моделі: {available}")
-        else:
-            available = []
-    except Exception as e:
-        print(f"⚠️ Не вдалось отримати список: {e}")
-        available = []
-    
-    # Знаходимо першу доступну модель
-    chosen_model = None
-    for m in candidate_models:
-        if m in available:
-            chosen_model = m
-            break
-    
-    # Якщо жодної зі списку — беремо першу доступну з чат-моделей
-    if not chosen_model and available:
-        for m in available:
-            if 'whisper' not in m.lower():
-                chosen_model = m
-                break
-    
-    if not chosen_model:
-        return "[ERROR]: No chat models available in Groq"
-    
-    print(f"✅ Використовую модель: {chosen_model}")
-    
-    # Виконуємо переклад
-    try:
+        print(f"🌍 Переклад: {len(text)} символів → {target_name}")
+        
         response = requests.post(
             'https://api.groq.com/openai/v1/chat/completions',
             headers={
@@ -186,11 +141,11 @@ def translate_text(text, target_lang):
                 'Content-Type': 'application/json'
             },
             json={
-                'model': chosen_model,
+                'model': 'openai/gpt-oss-120b',
                 'messages': [
                     {
                         'role': 'system',
-                        'content': f'Translate to {target_name}. Return ONLY the translation.'
+                        'content': f'Translate to {target_name}. Return ONLY the translation, no explanations.'
                     },
                     {
                         'role': 'user',
@@ -198,17 +153,23 @@ def translate_text(text, target_lang):
                     }
                 ],
                 'temperature': 0.3,
-                'max_tokens': max_out
+                'max_tokens': 8000
             },
-            timeout=60
+            timeout=120
         )
+        
+        print(f"📡 Groq: {response.status_code}")
         
         if response.status_code == 200:
             result = response.json()
-            return result['choices'][0]['message']['content'].strip()
+            translated = result['choices'][0]['message']['content'].strip()
+            print(f"✅ Готово: {translated[:80]}...")
+            return translated
         else:
+            print(f"❌ Groq {response.status_code}: {response.text[:300]}")
             return f"[ERROR {response.status_code}]: {response.text[:200]}"
     except Exception as e:
+        print(f"❌ Exception: {e}")
         return f"[EXCEPTION]: {str(e)[:200]}"
 
 # ============================================
