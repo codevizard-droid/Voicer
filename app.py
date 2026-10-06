@@ -160,7 +160,7 @@ def translate_text(text, target_lang):
             result = response.json()
             return result['choices'][0]['message']['content'].strip()
         else:
-            print(f"❌ Groq translate: {response.status_code}")
+            print(f"❌ Groq translate: {response.status_code} {response.text[:200]}")
             return None
     except Exception as e:
         print(f"❌ Помилка перекладу: {e}")
@@ -203,7 +203,6 @@ async def handle_message(event):
     wav = f"/tmp/{tid}.wav"
     
     try:
-        # === ЗАВАНТАЖЕННЯ ===
         async def progress_callback(current, total):
             percent = (current / total) * 100
             try:
@@ -214,14 +213,12 @@ async def handle_message(event):
         await client.download_media(replied, inp, progress_callback=progress_callback)
         print(f"📥 Завантажено: {inp}")
         
-        # === КОНВЕРТАЦІЯ ===
         await status_msg.edit("🔄 Конвертація...")
         if not convert_to_wav(inp, wav):
             await status_msg.edit("❌ Помилка конвертації")
             return
         print("🔄 Конвертовано")
         
-        # === РОЗШИФРОВКА ===
         wav_size_mb = os.path.getsize(wav) / (1024 * 1024)
         all_text = []
         detected_lang = None
@@ -264,11 +261,15 @@ async def handle_message(event):
         if auto_translate:
             await status_msg.edit(f"🌍 Перекладаю на {translate_to}...")
             translated_text = translate_text(full_text, translate_to)
-    
-        # === ФОРМУВАННЯ ===
-        safe_original = html.escape(full_text)
+            if translated_text:
+                print(f"✅ Перекладено: {translated_text[:80]}...")
         
-        # Назви мов
+        # === ФОРМУВАННЯ ===
+        def escape_md(text):
+            return text.replace("\\", "\\\\").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`").replace("[", "\\[").replace("]", "\\]")
+        
+        safe_original = escape_md(full_text)
+        
         lang_display = {
             "uk": "🇺🇦 Ukrainian",
             "en": "🇬🇧 English",
@@ -280,34 +281,32 @@ async def handle_message(event):
             "it": "🇮🇹 Italian",
         }
         
-        # Визначена або примусова мова
         display_lang = detected_lang or mode
         lang_label = lang_display.get(display_lang, display_lang.upper() if display_lang else "?")
         
         if translated_text:
-            safe_translation = html.escape(translated_text)
+            safe_translation = escape_md(translated_text)
             target_label = lang_display.get(translate_to, translate_to.upper())
             final_text = (
-                f"📝 <b>Розшифровка ({lang_label}):</b>\n"
-                f"<blockquote expandable>{safe_original}</blockquote>\n\n"
-                f"🌍 <b>Переклад ({target_label}):</b>\n"
-                f"<blockquote expandable>{safe_translation}</blockquote>"
+                f"📝 **Розшифровка ({lang_label}):**\n"
+                f"**> {safe_original}\n\n"
+                f"🌍 **Переклад ({target_label}):**\n"
+                f"**> {safe_translation}\n"
             )
         else:
             final_text = (
-                f"📝 <b>Розшифровка ({lang_label}):</b>\n"
-                f"<blockquote expandable>{safe_original}</blockquote>"
+                f"📝 **Розшифровка ({lang_label}):**\n"
+                f"**> {safe_original}\n"
             )
         
-        # === ВІДПРАВКА ===
         await status_msg.delete()
         
         if len(final_text) > 4000:
             parts = [final_text[i:i+4000] for i in range(0, len(final_text), 4000)]
             for part in parts:
-                await replied.reply(part, parse_mode='html')
+                await replied.reply(part, parse_mode='markdown')
         else:
-            await replied.reply(final_text, parse_mode='html')
+            await replied.reply(final_text, parse_mode='markdown')
         
         print("📤 Відправлено")
         
@@ -589,38 +588,53 @@ async def process_auto_audio(message):
             await status_msg.edit("❌ Порожній результат")
             return
         
+        # === ПЕРЕКЛАД ===
         translated_text = None
         if auto_translate:
             await status_msg.edit("🌍 Переклад...")
             translated_text = translate_text(full_text, translate_to)
         
-        safe_original = html.escape(full_text)
-        lang_display = {"uk": "🇺🇦", "en": "🇬🇧", "ru": "Russian", "pl": "🇵🇱"}
+        # === ФОРМУВАННЯ ===
+        def escape_md(text):
+            return text.replace("\\", "\\\\").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`").replace("[", "\\[").replace("]", "\\]")
+        
+        safe_original = escape_md(full_text)
+        
+        lang_display = {
+            "uk": "🇺🇦 Ukrainian",
+            "en": "🇬🇧 English",
+            "ru": "Russian",
+            "pl": "🇵🇱 Polish",
+            "de": "🇩🇪 German",
+            "fr": "🇫🇷 French",
+            "es": "🇪🇸 Spanish",
+        }
+        
         display_lang = detected_lang or mode
-        lang_label = lang_display.get(display_lang, display_lang.upper())
+        lang_label = lang_display.get(display_lang, display_lang.upper() if display_lang else "?")
         
         if translated_text:
-            safe_translation = html.escape(translated_text)
+            safe_translation = escape_md(translated_text)
             target_label = lang_display.get(translate_to, translate_to.upper())
             final_text = (
-                f"🤖 <b>Автотранскрипція ({lang_label}):</b>\n"
-                f"<blockquote expandable>{safe_original}</blockquote>\n\n"
-                f"🌍 <b>Переклад ({target_label}):</b>\n"
-                f"<blockquote expandable>{safe_translation}</blockquote>"
+                f"🤖 **Автотранскрипція ({lang_label}):**\n"
+                f"**> {safe_original}\n\n"
+                f"🌍 **Переклад ({target_label}):**\n"
+                f"**> {safe_translation}\n"
             )
         else:
             final_text = (
-                f"🤖 <b>Автотранскрипція ({lang_label}):</b>\n"
-                f"<blockquote expandable>{safe_original}</blockquote>"
+                f"🤖 **Автотранскрипція ({lang_label}):**\n"
+                f"**> {safe_original}\n"
             )
         
         await status_msg.delete()
         
         if len(final_text) > 4000:
             for i in range(0, len(final_text), 4000):
-                await message.reply(final_text[i:i+4000], parse_mode='html')
+                await message.reply(final_text[i:i+4000], parse_mode='markdown')
         else:
-            await message.reply(final_text, parse_mode='html')
+            await message.reply(final_text, parse_mode='markdown')
         
         print("📤 Автовідправлено")
         
@@ -706,7 +720,6 @@ async def handle_chat_commands(event):
         return
 
 async def handle_translate_command(event):
-    """Перекладає текст у відповіді"""
     message = event.message
     
     if not message.is_reply:
@@ -726,23 +739,25 @@ async def handle_translate_command(event):
     
     status = await message.reply("🌍 Перекладаю...")
     
-    try:
-        from deep_translator import GoogleTranslator
-        translated = GoogleTranslator(source='auto', target=translate_to).translate(text_to_translate)
-        
-        target_names = {"en": "🇬🇧 English", "uk": "🇺🇦 Українська", 
-                       "pl": "🇵🇱 Polski", "ru": "🇷🇺 Русский"}
-        
-        await status.edit(
-            f"🌍 <b>Переклад ({target_names.get(translate_to, translate_to)}):</b>\n"
-            f"<blockquote expandable>{html.escape(translated)}</blockquote>",
-            parse_mode='html'
-        )
-    except Exception as e:
-        await status.edit(f"❌ Помилка перекладу: {str(e)[:100]}")
+    translated = translate_text(text_to_translate, translate_to)
     
-    try: await message.delete()
-    except: pass
+    if translated:
+        def escape_md(text):
+            return text.replace("\\", "\\\\").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`").replace("[", "\\[").replace("]", "\\]")
+        
+        target_names = {"en": "🇬🇧 English", "uk": "🇺🇦 Ukrainian", "ru": "Russian", "pl": "🇵🇱 Polish"}
+        await status.edit(
+            f"🌍 **Переклад ({target_names.get(translate_to, translate_to)}):**\n"
+            f"**> {escape_md(translated)}\n",
+            parse_mode='markdown'
+        )
+    else:
+        await status.edit("❌ Помилка перекладу")
+    
+    try:
+        await message.delete()
+    except:
+        pass
 
 # ============================================
 # ЗАПУСК БОТА
