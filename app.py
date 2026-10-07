@@ -636,6 +636,22 @@ async def process_auto_audio(message):
         else:
             await message.reply(final_text, parse_mode='html')
 
+    
+        print("📤 Автовідправлено")
+    
+    except Exception as e:
+        print(f"❌ Авто-помилка: {e}")
+        try:
+            await status_msg.edit(f"❌ Помилка")
+        except:
+            pass
+    finally:
+        for p in [inp, wav]:
+            if os.path.exists(p):
+                try:
+                    os.remove(p)
+                except:
+                    pass
 
 # ============================================
 # КОМАНДИ +ЧАТ / -ЧАТ
