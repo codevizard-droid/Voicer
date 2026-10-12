@@ -239,7 +239,7 @@ async def handle_message(event):
             chat_title = "чат"
         
         # === ЗБЕРЕЖЕННЯ ФАЙЛУ У SAVED (тільки для зникаючих) ===
-                if is_ephemeral:
+        if is_ephemeral:
             try:
                 await client.send_file(
                     BOT_USERNAME,
