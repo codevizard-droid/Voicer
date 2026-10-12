@@ -197,46 +197,90 @@ async def handle_message(event):
     
     ext = ".ogg" if replied.voice else (".mp4" if replied.video_note else ".mp3")
     
+    # Перевірка: чи зникаюче?
+    is_ephemeral = (
+        getattr(replied, 'ttl_period', None) is not None or
+        bool(getattr(replied.media, 'ttl_seconds', None) if replied.media else None)
+    )
+    
     try:
         await message.delete()
     except:
         pass
     
-    status_msg = await replied.reply("⏳ Завантаження...")
-    
     tid = str(uuid.uuid4())
     inp = f"/tmp/{tid}{ext}"
     wav = f"/tmp/{tid}.wav"
     
+    # Для звичайних — показуємо статус в чаті
+    status_msg = None
+    if not is_ephemeral:
+        status_msg = await replied.reply("⏳ Завантаження...")
+    
     try:
+        # === ЗАВАНТАЖЕННЯ ===
         async def progress_callback(current, total):
             percent = (current / total) * 100
-            try:
-                await status_msg.edit(f"⏳ Завантаження... {percent:.0f}%")
-            except:
-                pass
+            if status_msg:
+                try:
+                    await status_msg.edit(f"⏳ Завантаження... {percent:.0f}%")
+                except:
+                    pass
         
         await client.download_media(replied, inp, progress_callback=progress_callback)
-        print(f"📥 Завантажено: {inp}")
+        print(f"📥 Завантажено: {inp} (ephemeral={is_ephemeral})")
         
-        await status_msg.edit("🔄 Конвертація...")
+        # Отримуємо назву чату
+        try:
+            chat = await replied.get_chat()
+            chat_title = getattr(chat, 'title', None) or getattr(chat, 'first_name', 'чат')
+        except:
+            chat_title = "чат"
+        
+        # === ЗБЕРЕЖЕННЯ ФАЙЛУ У SAVED (тільки для зникаючих) ===
+        if is_ephemeral:
+            try:
+                media_type = "voice" if replied.voice else ("video_note" if replied.video_note else "audio")
+                label = {
+                    "voice": "🎙 Зникаюче голосове",
+                    "video_note": "🎥 Зникаючий кружечок",
+                    "audio": "🎵 Зникаюче аудіо"
+                }.get(media_type, "📁 Зникаючий файл")
+                
+                await client.send_file(
+                    'me',
+                    file=inp,
+                    caption=f"{label} з чату «{chat_title}»",
+                    force_document=False  # зберігаємо як медіа
+                )
+                print(f"💾 Файл збережено в Saved Messages")
+            except Exception as e:
+                print(f"❌ Помилка збереження файлу: {e}")
+        
+        # === КОНВЕРТАЦІЯ ===
+        if status_msg:
+            await status_msg.edit("🔄 Конвертація...")
+        
         if not convert_to_wav(inp, wav):
-            await status_msg.edit("❌ Помилка конвертації")
+            if status_msg:
+                await status_msg.edit("❌ Помилка конвертації")
             return
-        print("🔄 Конвертовано")
         
+        # === РОЗШИФРОВКА ===
         wav_size_mb = os.path.getsize(wav) / (1024 * 1024)
         all_text = []
         detected_lang = None
         
         if wav_size_mb > 20:
-            await status_msg.edit("✂️ Розбиваю на частини...")
+            if status_msg:
+                await status_msg.edit("✂️ Розбиваю на частини...")
             chunks = split_audio(wav, 5)
             total = len(chunks)
             print(f"📦 Частин: {total}")
             
             for i, chunk in enumerate(chunks):
-                await status_msg.edit(f"🎙 Розшифровка... {i+1}/{total}")
+                if status_msg:
+                    await status_msg.edit(f"🎙 Розшифровка... {i+1}/{total}")
                 r = transcribe_audio(chunk, language=lang_param)
                 if r.get("success"):
                     all_text.append(r["text"])
@@ -247,17 +291,20 @@ async def handle_message(event):
                 except:
                     pass
         else:
-            await status_msg.edit("🎙 Розшифровка...")
+            if status_msg:
+                await status_msg.edit("🎙 Розшифровка...")
             r = transcribe_audio(wav, language=lang_param)
             if not r.get("success"):
-                await status_msg.edit(f"❌ {r.get('text', 'Не вдалося')}")
+                if status_msg:
+                    await status_msg.edit(f"❌ {r.get('text', 'Не вдалося')}")
                 return
             all_text.append(r["text"])
             detected_lang = r.get("language")
         
         full_text = " ".join(all_text).strip()
         if not full_text:
-            await status_msg.edit("❌ Порожній результат")
+            if status_msg:
+                await status_msg.edit("❌ Порожній результат")
             return
         
         print(f"✅ Розшифровано: {full_text[:80]}...")
@@ -265,12 +312,13 @@ async def handle_message(event):
         # === ПЕРЕКЛАД ===
         translated_text = None
         if auto_translate:
-            await status_msg.edit(f"🌍 Перекладаю на {translate_to}...")
-            translated_text = translate_text(full_text, translate_to)
-            if translated_text:
-                print(f"✅ Перекладено: {translated_text[:80]}...")
+            if status_msg:
+                await status_msg.edit(f"🌍 Перекладаю на {translate_to}...")
+            result = translate_text(full_text, translate_to)
+            if result and not (result.startswith("[ERROR") or result.startswith("[EXCEPTION")):
+                translated_text = result
         
-                # === ФОРМУВАННЯ ===
+        # === ФОРМУВАННЯ ===
         safe_original = html.escape(full_text)
         
         lang_display = {
@@ -281,7 +329,6 @@ async def handle_message(event):
             "de": "🇩🇪 German",
             "fr": "🇫🇷 French",
             "es": "🇪🇸 Spanish",
-            "it": "🇮🇹 Italian",
         }
         
         display_lang = detected_lang or mode
@@ -302,24 +349,39 @@ async def handle_message(event):
                 f"<blockquote expandable>{safe_original}</blockquote>"
             )
         
-        await status_msg.delete()
-        
-        if len(final_text) > 4000:
-            parts = [final_text[i:i+4000] for i in range(0, len(final_text), 4000)]
-            for part in parts:
-                await replied.reply(part, parse_mode='html')
+        # === ВІДПРАВКА ===
+        if is_ephemeral:
+            # ЗНИКАЮЧЕ — тільки в Saved Messages
+            if status_msg:
+                try:
+                    await status_msg.delete()
+                except:
+                    pass
+            
+            if len(final_text) > 4000:
+                for i in range(0, len(final_text), 4000):
+                    await client.send_message('me', final_text[i:i+4000], parse_mode='html')
+            else:
+                await client.send_message('me', final_text, parse_mode='html')
+            print("📤 → Saved Messages")
         else:
-            await replied.reply(final_text, parse_mode='html')
-
-
-        print("📤 Відправлено")
-    
+            # ЗВИЧАЙНЕ — як було, у чат
+            await status_msg.delete()
+            if len(final_text) > 4000:
+                parts = [final_text[i:i+4000] for i in range(0, len(final_text), 4000)]
+                for part in parts:
+                    await replied.reply(part, parse_mode='html')
+            else:
+                await replied.reply(final_text, parse_mode='html')
+            print("📤 → у чат")
+        
     except Exception as e:
         print(f"❌ Помилка: {e}")
-        try:
-            await status_msg.edit(f"❌ Помилка: {str(e)[:100]}")
-        except:
-            pass
+        if status_msg:
+            try:
+                await status_msg.edit(f"❌ Помилка")
+            except:
+                pass
     finally:
         for p in [inp, wav]:
             if os.path.exists(p):
@@ -327,6 +389,7 @@ async def handle_message(event):
                     os.remove(p)
                 except:
                     pass
+                    
 # ============================================
 # МЕНЮ НАЛАШТУВАНЬ
 # ============================================
@@ -535,8 +598,6 @@ async def handle_auto_transcribe(event):
 async def process_auto_audio(message):
     ext = ".ogg" if message.voice else (".mp4" if message.video_note else ".mp3")
     
-    status_msg = await message.reply("🤖 Автотранскрипція...")
-    
     tid = str(uuid.uuid4())
     inp = f"/tmp/{tid}{ext}"
     wav = f"/tmp/{tid}.wav"
@@ -548,14 +609,56 @@ async def process_auto_audio(message):
     auto_translate = user_settings.get('auto_translate', False)
     translate_to = user_settings.get('translate_to', 'en')
     
+    # Перевірка: чи зникаюче?
+    is_ephemeral = (
+        getattr(message, 'ttl_period', None) is not None or
+        bool(getattr(message.media, 'ttl_seconds', None) if message.media else None)
+    )
+    
+    # Для звичайних — показуємо статус
+    status_msg = None
+    if not is_ephemeral:
+        status_msg = await message.reply("🤖 Автотранскрипція...")
+    
     try:
         await client.download_media(message, inp)
-        await status_msg.edit("🔄 Конвертація...")
+        
+        try:
+            chat = await message.get_chat()
+            chat_title = getattr(chat, 'title', None) or getattr(chat, 'first_name', 'чат')
+        except:
+            chat_title = "чат"
+        
+        # Зберігаємо файл у Saved (тільки для зникаючих)
+        if is_ephemeral:
+            try:
+                media_type = "voice" if message.voice else ("video_note" if message.video_note else "audio")
+                label = {
+                    "voice": "🎙 Зникаюче голосове",
+                    "video_note": "🎥 Зникаючий кружечок",
+                    "audio": "🎵 Зникаюче аудіо"
+                }.get(media_type, "📁 Зникаючий файл")
+                
+                await client.send_file(
+                    'me',
+                    file=inp,
+                    caption=f"{label} з чату «{chat_title}»",
+                    force_document=False
+                )
+                print(f"💾 Файл збережено в Saved")
+            except Exception as e:
+                print(f"❌ Помилка збереження: {e}")
+        
+        # === КОНВЕРТАЦІЯ ===
+        if status_msg:
+            await status_msg.edit("🔄 Конвертація...")
         
         if not convert_to_wav(inp, wav):
-            await status_msg.edit("❌ Помилка конвертації")
+            if status_msg:
+                await status_msg.edit("❌ Помилка конвертації")
             return
         
+        # === РОЗШИФРОВКА ===
         wav_size_mb = os.path.getsize(wav) / (1024 * 1024)
         all_text = []
         detected_lang = None
@@ -563,10 +666,10 @@ async def process_auto_audio(message):
         if wav_size_mb > 20:
             chunks = split_audio(wav, 5)
             total = len(chunks)
-            print(f"📦 Частин: {total}")
             
             for i, chunk in enumerate(chunks):
-                await status_msg.edit(f"🎙 {i+1}/{total}")
+                if status_msg:
+                    await status_msg.edit(f"🎙 {i+1}/{total}")
                 r = transcribe_audio(chunk, language=lang_param)
                 if r.get("success"):
                     all_text.append(r["text"])
@@ -577,27 +680,32 @@ async def process_auto_audio(message):
                 except:
                     pass
         else:
-            await status_msg.edit("🎙 Розшифровка...")
+            if status_msg:
+                await status_msg.edit("🎙 Розшифровка...")
             r = transcribe_audio(wav, language=lang_param)
             if not r.get("success"):
-                await status_msg.edit(f"❌ {r.get('text')}")
+                if status_msg:
+                    await status_msg.edit(f"❌ {r.get('text')}")
                 return
             all_text.append(r["text"])
             detected_lang = r.get("language")
         
         full_text = " ".join(all_text).strip()
         if not full_text:
-            await status_msg.edit("❌ Порожній результат")
+            if status_msg:
+                await status_msg.edit("❌ Порожній результат")
             return
         
         # === ПЕРЕКЛАД ===
         translated_text = None
         if auto_translate:
-            await status_msg.edit("🌍 Переклад...")
-            translated_text = translate_text(full_text, translate_to)
+            if status_msg:
+                await status_msg.edit("🌍 Переклад...")
+            result = translate_text(full_text, translate_to)
+            if result and not (result.startswith("[ERROR") or result.startswith("[EXCEPTION")):
+                translated_text = result
         
-        
-                # === ФОРМУВАННЯ ===
+        # === ФОРМУВАННЯ ===
         safe_original = html.escape(full_text)
         
         lang_display = {
@@ -606,8 +714,6 @@ async def process_auto_audio(message):
             "ru": "Russian",
             "pl": "🇵🇱 Polish",
             "de": "🇩🇪 German",
-            "fr": "🇫🇷 French",
-            "es": "🇪🇸 Spanish",
         }
         
         display_lang = detected_lang or mode
@@ -628,23 +734,42 @@ async def process_auto_audio(message):
                 f"<blockquote expandable>{safe_original}</blockquote>"
             )
         
-        await status_msg.delete()
-        
-        if len(final_text) > 4000:
-            for i in range(0, len(final_text), 4000):
-                await message.reply(final_text[i:i+4000], parse_mode='html')
+        # === ВІДПРАВКА ===
+        if is_ephemeral:
+            # ЗНИКАЮЧЕ — тільки в Saved
+            if status_msg:
+                try:
+                    await status_msg.delete()
+                except:
+                    pass
+            
+            header = f"🤖 Авто з чату «{chat_title}»\n\n"
+            final_text = header + final_text
+            
+            if len(final_text) > 4000:
+                for i in range(0, len(final_text), 4000):
+                    await client.send_message('me', final_text[i:i+4000], parse_mode='html')
+            else:
+                await client.send_message('me', final_text, parse_mode='html')
+            print("📤 → Saved")
         else:
-            await message.reply(final_text, parse_mode='html')
-
-    
+            # ЗВИЧАЙНЕ — у чат
+            await status_msg.delete()
+            if len(final_text) > 4000:
+                for i in range(0, len(final_text), 4000):
+                    await message.reply(final_text[i:i+4000], parse_mode='html')
+            else:
+                await message.reply(final_text, parse_mode='html')
+        
         print("📤 Автовідправлено")
-    
+        
     except Exception as e:
         print(f"❌ Авто-помилка: {e}")
-        try:
-            await status_msg.edit(f"❌ Помилка")
-        except:
-            pass
+        if status_msg:
+            try:
+                await status_msg.edit(f"❌ Помилка")
+            except:
+                pass
     finally:
         for p in [inp, wav]:
             if os.path.exists(p):
