@@ -344,7 +344,7 @@ async def handle_message(event):
             )
         
         # === ВІДПРАВКА ===
-                if is_ephemeral:
+        if is_ephemeral:
             # ЗНИКАЮЧЕ — нічого не надсилаємо в чат, файл уже в боті
             if status_msg:
                 try:
