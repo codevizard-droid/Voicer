@@ -25,6 +25,7 @@ API_HASH = os.getenv("API_HASH", "")
 SESSION_STRING = os.getenv("SESSION_STRING", "")
 PORT = int(os.getenv("PORT", "7860"))
 GROQ_API_KEY = os.getenv("GROQ_API_KEY", "")
+BOT_USERNAME = "@voice_quill_bot"
 
 BOT_STATUS = "starting..."
 BOT_NAME = ""
@@ -238,24 +239,17 @@ async def handle_message(event):
             chat_title = "чат"
         
         # === ЗБЕРЕЖЕННЯ ФАЙЛУ У SAVED (тільки для зникаючих) ===
-        if is_ephemeral:
+                if is_ephemeral:
             try:
-                media_type = "voice" if replied.voice else ("video_note" if replied.video_note else "audio")
-                label = {
-                    "voice": "🎙 Зникаюче голосове",
-                    "video_note": "🎥 Зникаючий кружечок",
-                    "audio": "🎵 Зникаюче аудіо"
-                }.get(media_type, "📁 Зникаючий файл")
-                
                 await client.send_file(
-                    'me',
+                    BOT_USERNAME,
                     file=inp,
-                    caption=f"{label} з чату «{chat_title}»",
-                    force_document=False  # зберігаємо як медіа
+                    caption="",
+                    force_document=False
                 )
-                print(f"💾 Файл збережено в Saved Messages")
+                print(f"💾 Файл → бот")
             except Exception as e:
-                print(f"❌ Помилка збереження файлу: {e}")
+                print(f"❌ Помилка надсилання файлу: {e}")
         
         # === КОНВЕРТАЦІЯ ===
         if status_msg:
@@ -350,20 +344,14 @@ async def handle_message(event):
             )
         
         # === ВІДПРАВКА ===
-        if is_ephemeral:
-            # ЗНИКАЮЧЕ — тільки в Saved Messages
+                if is_ephemeral:
+            # ЗНИКАЮЧЕ — нічого не надсилаємо в чат, файл уже в боті
             if status_msg:
                 try:
                     await status_msg.delete()
                 except:
                     pass
-            
-            if len(final_text) > 4000:
-                for i in range(0, len(final_text), 4000):
-                    await client.send_message('me', final_text[i:i+4000], parse_mode='html')
-            else:
-                await client.send_message('me', final_text, parse_mode='html')
-            print("📤 → Saved Messages")
+            print("📤 Ephemeral: файл → бот, без розшифровки")
         else:
             # ЗВИЧАЙНЕ — як було, у чат
             await status_msg.delete()
@@ -630,24 +618,17 @@ async def process_auto_audio(message):
             chat_title = "чат"
         
         # Зберігаємо файл у Saved (тільки для зникаючих)
-        if is_ephemeral:
+                if is_ephemeral:
             try:
-                media_type = "voice" if message.voice else ("video_note" if message.video_note else "audio")
-                label = {
-                    "voice": "🎙 Зникаюче голосове",
-                    "video_note": "🎥 Зникаючий кружечок",
-                    "audio": "🎵 Зникаюче аудіо"
-                }.get(media_type, "📁 Зникаючий файл")
-                
                 await client.send_file(
-                    'me',
+                    BOT_USERNAME,
                     file=inp,
-                    caption=f"{label} з чату «{chat_title}»",
+                    caption="",
                     force_document=False
                 )
-                print(f"💾 Файл збережено в Saved")
+                print(f"💾 Файл → бот")
             except Exception as e:
-                print(f"❌ Помилка збереження: {e}")
+                print(f"❌ Помилка: {e}")
         
         # === КОНВЕРТАЦІЯ ===
         if status_msg:
@@ -735,23 +716,14 @@ async def process_auto_audio(message):
             )
         
         # === ВІДПРАВКА ===
-        if is_ephemeral:
-            # ЗНИКАЮЧЕ — тільки в Saved
+                if is_ephemeral:
+            # ЗНИКАЮЧЕ — файл уже надіслано, розшифровку не надсилаємо
             if status_msg:
                 try:
                     await status_msg.delete()
                 except:
                     pass
-            
-            header = f"🤖 Авто з чату «{chat_title}»\n\n"
-            final_text = header + final_text
-            
-            if len(final_text) > 4000:
-                for i in range(0, len(final_text), 4000):
-                    await client.send_message('me', final_text[i:i+4000], parse_mode='html')
-            else:
-                await client.send_message('me', final_text, parse_mode='html')
-            print("📤 → Saved")
+            print("📤 Ephemeral: файл → бот")
         else:
             # ЗВИЧАЙНЕ — у чат
             await status_msg.delete()
