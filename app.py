@@ -618,7 +618,7 @@ async def process_auto_audio(message):
             chat_title = "чат"
         
         # Зберігаємо файл у Saved (тільки для зникаючих)
-                if is_ephemeral:
+        if is_ephemeral:
             try:
                 await client.send_file(
                     BOT_USERNAME,
