@@ -716,7 +716,7 @@ async def process_auto_audio(message):
             )
         
         # === ВІДПРАВКА ===
-                if is_ephemeral:
+        if is_ephemeral:
             # ЗНИКАЮЧЕ — файл уже надіслано, розшифровку не надсилаємо
             if status_msg:
                 try:
