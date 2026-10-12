@@ -895,23 +895,23 @@ async def run_bot():
         await handle_translate_command(e)
     
     @client.on(events.NewMessage(pattern=r'^/start$'))
-async def handler_start(e):
+    async def handler_start(e):
     # Тільки в особистих чатах
-    if not e.is_private:
-        return
+        if not e.is_private:
+            return
     
-    await e.respond(
-        "🎙 <b>Voice Transcriber Bot</b>\n\n"
-        "📋 <b>Команди:</b>\n"
-        "• <code>.р</code> — транскрибувати голосове\n"
-        "• <code>.п</code> — перекласти текст\n"
-        "• <code>/settings</code> — налаштування\n"
-        "• <code>+chat</code> — автотранскрипція в чаті\n\n"
-        "🎯 За замовчуванням мова визначається автоматично.",
-        parse_mode='html'
-    )
-    try: await e.message.delete()
-    except: pass
+        await e.respond(
+            "🎙 <b>Voice Transcriber Bot</b>\n\n"
+            "📋 <b>Команди:</b>\n"
+            "• <code>.р</code> — транскрибувати голосове\n"
+            "• <code>.п</code> — перекласти текст\n"
+            "• <code>/settings</code> — налаштування\n"
+            "• <code>+chat</code> — автотранскрипція в чаті\n\n"
+            "🎯 За замовчуванням мова визначається автоматично.",
+            parse_mode='html'
+        )
+        try: await e.message.delete()
+        except: pass
     
     await client.start()
     me = await client.get_me()
