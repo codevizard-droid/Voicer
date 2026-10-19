@@ -187,13 +187,11 @@ async def handle_message(event):
     translate_to = user_settings.get('translate_to', 'en')
     
     if not message.is_reply:
-        await message.reply("❌ Використовуйте команду як відповідь на голосове повідомлення.")
         return
     
     replied = await message.get_reply_message()
     
     if not (replied.voice or replied.video_note or replied.audio):
-        await message.reply("❌ Це не голосове повідомлення.")
         return
     
     ext = ".ogg" if replied.voice else (".mp4" if replied.video_note else ".mp3")
@@ -257,7 +255,10 @@ async def handle_message(event):
         
         if not convert_to_wav(inp, wav):
             if status_msg:
-                await status_msg.edit("❌ Помилка конвертації")
+                try:
+                    await status_msg.delete()
+                except:
+                    pass
             return
         
         # === РОЗШИФРОВКА ===
@@ -290,7 +291,10 @@ async def handle_message(event):
             r = transcribe_audio(wav, language=lang_param)
             if not r.get("success"):
                 if status_msg:
-                    await status_msg.edit(f"❌ {r.get('text', 'Не вдалося')}")
+                    try:
+                        await status_msg.delete()
+                    except:
+                        pass
                 return
             all_text.append(r["text"])
             detected_lang = r.get("language")
@@ -298,7 +302,10 @@ async def handle_message(event):
         full_text = " ".join(all_text).strip()
         if not full_text:
             if status_msg:
-                await status_msg.edit("❌ Порожній результат")
+                try:
+                    await status_msg.delete()
+                except:
+                    pass
             return
         
         print(f"✅ Розшифровано: {full_text[:80]}...")
@@ -367,7 +374,7 @@ async def handle_message(event):
         print(f"❌ Помилка: {e}")
         if status_msg:
             try:
-                await status_msg.edit(f"❌ Помилка")
+                await status_msg.delete()
             except:
                 pass
     finally:
@@ -636,7 +643,10 @@ async def process_auto_audio(message):
         
         if not convert_to_wav(inp, wav):
             if status_msg:
-                await status_msg.edit("❌ Помилка конвертації")
+                try:
+                    await status_msg.delete()
+                except:
+                    pass
             return
         
         # === РОЗШИФРОВКА ===
@@ -666,7 +676,10 @@ async def process_auto_audio(message):
             r = transcribe_audio(wav, language=lang_param)
             if not r.get("success"):
                 if status_msg:
-                    await status_msg.edit(f"❌ {r.get('text')}")
+                    try:
+                        await status_msg.delete()
+                    except:
+                        pass
                 return
             all_text.append(r["text"])
             detected_lang = r.get("language")
@@ -674,7 +687,10 @@ async def process_auto_audio(message):
         full_text = " ".join(all_text).strip()
         if not full_text:
             if status_msg:
-                await status_msg.edit("❌ Порожній результат")
+                try:
+                    await status_msg.delete()
+                except:
+                    pass
             return
         
         # === ПЕРЕКЛАД ===
@@ -739,16 +755,9 @@ async def process_auto_audio(message):
         print(f"❌ Авто-помилка: {e}")
         if status_msg:
             try:
-                await status_msg.edit(f"❌ Помилка")
+                await status_msg.delete()
             except:
                 pass
-    finally:
-        for p in [inp, wav]:
-            if os.path.exists(p):
-                try:
-                    os.remove(p)
-                except:
-                    pass
 
 # ============================================
 # КОМАНДИ +ЧАТ / -ЧАТ
@@ -819,40 +828,48 @@ async def handle_chat_commands(event):
 async def handle_translate_command(event):
     message = event.message
     
+    me = await client.get_me()
+    if message.sender_id != me.id:
+        return
+    
     if not message.is_reply:
-        await message.reply("❌ Відповідайте на текстове повідомлення.")
         return
     
     replied = await message.get_reply_message()
     text_to_translate = replied.text or replied.message
     
     if not text_to_translate:
-        await message.reply("❌ Повідомлення порожнє.")
         return
     
     user_id = message.sender_id
     user_settings = get_user_settings(user_id)
     translate_to = user_settings.get('translate_to', 'en')
     
-    status = await message.reply("🌍 Перекладаю...")
-    
     translated = translate_text(text_to_translate, translate_to)
-    
-    if translated:
-        def escape_md(text):
-            return text.replace("\\", "\\\\").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`").replace("[", "\\[").replace("]", "\\]")
-        
-        target_names = {"en": "🇬🇧 English", "uk": "🇺🇦 Ukrainian", "ru": "Russian", "pl": "🇵🇱 Polish"}
-        await status.edit(
-            f"🌍 **Переклад ({target_names.get(translate_to, translate_to)}):**\n"
-            f"**> {escape_md(translated)}\n",
-            parse_mode='markdown'
-        )
-    else:
-        await status.edit("❌ Помилка перекладу")
     
     try:
         await message.delete()
+    except:
+        pass
+    
+    if not translated:
+        return
+    
+    if translated.startswith("[ERROR") or translated.startswith("[EXCEPTION"):
+        return
+    
+    def escape_md(text):
+        return text.replace("\\", "\\\\").replace("*", "\\*").replace("_", "\\_").replace("`", "\\`")
+    
+    target_names = {"en": "🇬🇧 English", "uk": "🇺🇦 Ukrainian", "ru": "Russian", "pl": "🇵🇱 Polish"}
+    
+    final_text = (
+        f"🌍 <b>Переклад ({target_names.get(translate_to, translate_to)}):</b>\n"
+        f"<blockquote expandable>{html.escape(translated)}</blockquote>"
+    )
+    
+    try:
+        await replied.reply(final_text, parse_mode='html')
     except:
         pass
 
