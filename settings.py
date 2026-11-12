@@ -9,6 +9,7 @@ DEFAULT_SETTINGS = {
     "language_mode": "auto",     # "auto", "uk", "en", "ru"
     "auto_translate": False,
     "translate_to": "en",
+    "emoji": True,               # пунктуація + емодзі за інтонацією
     "auto_chats": []
 }
 

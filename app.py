@@ -31,6 +31,36 @@ BOT_STATUS = "starting..."
 BOT_NAME = ""
 client = None
 
+# Підказки для Whisper: задають стиль розшифровки (пунктуація, регістр).
+# Надсилаємо лише коли мова відома, щоб не збивати авто-визначення.
+WHISPER_PROMPTS = {
+    "uk": "Це розшифровка голосового повідомлення українською мовою. "
+          "Розстав розділові знаки, великі літери та абзаци.",
+    "en": "This is a transcription of an English voice message. "
+          "Use proper punctuation, capitalization and sentence breaks.",
+    "ru": "Это расшифровка голосового сообщения на русском языке. "
+          "Расставь знаки препинания, заглавные буквы и абзацы.",
+    "pl": "To jest transkrypcja polskiej wiadomości głosowej. "
+          "Dodaj interpunkcję, wielkie litery i podział na zdania.",
+}
+
+# Промт для пост-обробки: пунктуація + емодзі за інтонацією.
+EMOJI_PROMPT = (
+    "Ти — редактор розшифровки голосових повідомлень. "
+    "Поверни ЛИШЕ готовий текст, без коментарів, пояснень чи вступних фраз.\n"
+    "Правила:\n"
+    "1. Збережи мову та зміст оригіналу дослівно: не додавай і не вилучай слів, "
+    "не перефразовуй, не скорочуй.\n"
+    "2. Виправ розділові знаки, великі літери та очевидні помилки розпізнавання, "
+    "розбий текст на речення й абзаци.\n"
+    "3. Додай доречні емодзі за контекстом та інтонацією: сміх — 😂🤣, "
+    "смуток/плач — 😢😭, подив — 😮, захоплення — 🤩, подяка — 🙏, "
+    "запитання/роздуми — 🤔, іронія — 😏, злість/крик — 😠, любов — ❤️, "
+    "схвалення — 👍, втома — 😮‍💨. Не більше 1–2 емодзі на речення, "
+    "не перевантажуй текст.\n"
+    "4. Емодзі мають відображати саме емоцію мовця, а не прикрашати кожне слово."
+)
+
 # ============================================
 # ДОПОМІЖНІ ФУНКЦІЇ
 # ============================================
@@ -71,6 +101,32 @@ def split_audio(wav_path, chunk_minutes=5):
     return chunks
 
 
+def get_media_ext(message):
+    """Повертає розширення для підтримуваних медіа або None.
+
+    Окрім голосових, кружечків і аудіо підтримуються звичайні відео:
+    завантажений і повторно відправлений кружечок перетворюється
+    на відео (іноді — на документ з MIME video/*).
+    """
+    if message.voice:
+        return ".ogg"
+    if message.video_note:
+        return ".mp4"
+    if message.audio:
+        return ".mp3"
+    if message.video:
+        return ".mp4"
+
+    # Повторно відправлений кружечок може прийти як документ
+    doc = getattr(message, 'document', None)
+    mime = (getattr(doc, 'mime_type', None) or '') if doc else ''
+    if mime.startswith('video/'):
+        return ".mp4"
+    if mime.startswith('audio/'):
+        return ".mp3"
+    return None
+
+
 def transcribe_audio(audio_path, language=None):
     """Розшифровка через Groq API з авто-визначенням мови.
     language=None — автоматичне визначення.
@@ -85,6 +141,9 @@ def transcribe_audio(audio_path, language=None):
             }
             if language:
                 data['language'] = language
+                prompt = WHISPER_PROMPTS.get(language)
+                if prompt:
+                    data['prompt'] = prompt
             
             response = requests.post(
                 'https://api.groq.com/openai/v1/audio/transcriptions',
@@ -146,7 +205,7 @@ def translate_text(text, target_lang):
                 'messages': [
                     {
                         'role': 'system',
-                        'content': f'Translate to {target_name}. Return ONLY the translation, no explanations.'
+                        'content': f'Translate to {target_name}. Return ONLY the translation, no explanations. Keep all emojis exactly as in the source.'
                     },
                     {
                         'role': 'user',
@@ -173,6 +232,58 @@ def translate_text(text, target_lang):
         print(f"❌ Exception: {e}")
         return f"[EXCEPTION]: {str(e)[:200]}"
 
+def add_emojis(text, language=None):
+    """Пост-обробка розшифровки: пунктуація + емодзі за інтонацією.
+
+    Не змінює зміст, лише оформлює текст. У разі помилки повертає
+    оригінал, щоб ніколи не втратити розшифровку.
+    """
+    if not text or len(text) > 6000:
+        # Дуже довгий текст не женемо через LLM — лишаємо як є
+        return text
+
+    target_name = {"uk": "Ukrainian", "en": "English",
+                   "ru": "Russian", "pl": "Polish"}.get(language or "", "")
+
+    system_prompt = EMOJI_PROMPT
+    if target_name:
+        system_prompt += f"\n5. Мова тексту: {target_name}."
+
+    try:
+        response = requests.post(
+            'https://api.groq.com/openai/v1/chat/completions',
+            headers={
+                'Authorization': f'Bearer {GROQ_API_KEY}',
+                'Content-Type': 'application/json'
+            },
+            json={
+                'model': 'openai/gpt-oss-120b',
+                'messages': [
+                    {'role': 'system', 'content': system_prompt},
+                    {'role': 'user', 'content': text}
+                ],
+                'temperature': 0.2,
+                'max_tokens': 4000
+            },
+            timeout=90
+        )
+
+        if response.status_code == 200:
+            result = response.json()
+            enriched = result['choices'][0]['message']['content'].strip()
+            # Прибираємо можливі лапки-обгортки навколо всього тексту
+            if len(enriched) > 2 and enriched[0] == enriched[-1] and enriched[0] in '"\u201c\u00ab':
+                enriched = enriched[1:-1].strip()
+            if enriched:
+                return enriched
+        else:
+            print(f"❌ Emoji {response.status_code}: {response.text[:200]}")
+    except Exception as e:
+        print(f"❌ Emoji exception: {e}")
+
+    return text
+
+
 # ============================================
 # ОБРОБНИК ТРАНСКРИПЦІЇ (відповідь .t)
 # ============================================
@@ -191,10 +302,9 @@ async def handle_message(event):
     
     replied = await message.get_reply_message()
     
-    if not (replied.voice or replied.video_note or replied.audio):
+    ext = get_media_ext(replied)
+    if not ext:
         return
-    
-    ext = ".ogg" if replied.voice else (".mp4" if replied.video_note else ".mp3")
     
     # Перевірка: чи зникаюче?
     is_ephemeral = (
@@ -310,6 +420,12 @@ async def handle_message(event):
         
         print(f"✅ Розшифровано: {full_text[:80]}...")
         
+        # === ОФОРМЛЕННЯ: ПУНКТУАЦІЯ + ЕМОДЗІ ===
+        if user_settings.get('emoji', True):
+            if status_msg:
+                await status_msg.edit("✨ Оформлюю текст...")
+            full_text = add_emojis(full_text, detected_lang or lang_param)
+        
         # === ПЕРЕКЛАД ===
         translated_text = None
         if auto_translate:
@@ -395,6 +511,7 @@ async def show_settings_menu(event):
     mode = user_settings.get('language_mode', 'auto')
     auto_translate = user_settings.get('auto_translate', False)
     translate_to = user_settings.get('translate_to', 'en')
+    emoji = user_settings.get('emoji', True)
     
     mode_names = {
         "auto": "🎯 Auto-detect",
@@ -415,7 +532,9 @@ async def show_settings_menu(event):
         f"   • {mode_names.get(mode, mode)}\n\n"
         "🌍 <b>TRANSLATION</b>\n"
         f"   • {'✅ Enabled' if auto_translate else '❌ Disabled'}\n"
-        f"   • Target: {target_names.get(translate_to, translate_to)}\n"
+        f"   • Target: {target_names.get(translate_to, translate_to)}\n\n"
+        "✨ <b>EMOJI & PUNCTUATION</b>\n"
+        f"   • {'✅ Enabled' if emoji else '❌ Disabled'}\n"
         "━━━━━━━━━━━━━━━━━━━━\n\n"
         "🎙 <b>Transcription mode:</b>\n"
         "<code>/auto</code> — auto-detect\n"
@@ -427,6 +546,8 @@ async def show_settings_menu(event):
         "<code>/to_en</code> — 🇬🇧 English\n"
         "<code>/to_uk</code> — 🇺🇦 Ukrainian\n"
         "<code>/to_ru</code> — Russian\n\n"
+        "✨ <b>Emoji & punctuation:</b>\n"
+        "<code>/emoji_on</code> / <code>/emoji_off</code>\n\n"
         "🤖 <b>Auto-transcription:</b>\n"
         "<code>+chat</code> — add chat\n"
         "<code>-chat</code> — remove chat\n"
@@ -511,12 +632,28 @@ async def handle_settings_command(event):
         except: pass
         return
     
+    # === EMOJI & PUNCTUATION ===
+    if text == '/emoji_on':
+        update_user_settings(user_id, {"emoji": True})
+        await event.respond("✅ Emoji & punctuation: ON")
+        try: await event.message.delete()
+        except: pass
+        return
+    
+    if text == '/emoji_off':
+        update_user_settings(user_id, {"emoji": False})
+        await event.respond("✅ Emoji & punctuation: OFF")
+        try: await event.message.delete()
+        except: pass
+        return
+    
     # === STATUS ===
     if text == '/status':
         s = get_user_settings(user_id)
         mode = s.get('language_mode', 'auto')
         auto = s.get('auto_translate', False)
         target = s.get('translate_to', 'en')
+        emoji = s.get('emoji', True)
         auto_chats = s.get('auto_chats', [])
         
         mode_names = {
@@ -553,12 +690,14 @@ async def handle_settings_command(event):
             f"   • Mode: {mode_names.get(mode, mode)}\n\n"
             "🌍 <b>TRANSLATION</b>\n"
             f"   • Auto: {'✅ ON' if auto else '❌ OFF'}\n"
-            f"   • Target: {target_names.get(target, target)}"
+            f"   • Target: {target_names.get(target, target)}\n\n"
+            "✨ <b>EMOJI & PUNCTUATION</b>\n"
+            f"   • {'✅ ON' if emoji else '❌ OFF'}"
             f"{chats_text}\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
             "🤖 <b>System</b>\n"
             "   • Model: Whisper Large v3\n"
-            "   • Translator: Deepl Translate"
+            "   • Translator: Groq gpt-oss-120b"
         )
         
         await event.respond(text_response, parse_mode='html')
@@ -576,7 +715,7 @@ async def handle_auto_transcribe(event):
     if message.out:
         return
     
-    if not (message.voice or message.video_note or message.audio):
+    if not get_media_ext(message):
         return
     
     chat_id = message.chat_id
@@ -591,7 +730,9 @@ async def handle_auto_transcribe(event):
 
 
 async def process_auto_audio(message):
-    ext = ".ogg" if message.voice else (".mp4" if message.video_note else ".mp3")
+    ext = get_media_ext(message)
+    if not ext:
+        return
     
     tid = str(uuid.uuid4())
     inp = f"/tmp/{tid}{ext}"
@@ -692,6 +833,12 @@ async def process_auto_audio(message):
                 except:
                     pass
             return
+        
+        # === ОФОРМЛЕННЯ: ПУНКТУАЦІЯ + ЕМОДЗІ ===
+        if user_settings.get('emoji', True):
+            if status_msg:
+                await status_msg.edit("✨ Оформлюю текст...")
+            full_text = add_emojis(full_text, detected_lang or lang_param)
         
         # === ПЕРЕКЛАД ===
         translated_text = None
@@ -892,7 +1039,7 @@ async def run_bot():
         print(f"⚙️ /settings від {e.sender_id}")
         await show_settings_menu(e)
     
-    @client.on(events.NewMessage(pattern=r'^/(auto|lang_(en|uk|ru)|tr_(on|off)|to_(en|uk|ru)|status)$'))
+    @client.on(events.NewMessage(pattern=r'^/(auto|lang_(en|uk|ru)|tr_(on|off)|to_(en|uk|ru)|emoji_(on|off)|status)$'))
     async def handler_settings_commands(e):
         print(f"⚙️ Команда: {e.message.text}")
         await handle_settings_command(e)
@@ -904,7 +1051,7 @@ async def run_bot():
     
     @client.on(events.NewMessage(incoming=True))
     async def handler_auto(e):
-        if e.message.voice or e.message.video_note or e.message.audio:
+        if get_media_ext(e.message):
             await handle_auto_transcribe(e)
 
     @client.on(events.NewMessage(pattern=r'^\.(п|p)$'))
@@ -920,9 +1067,10 @@ async def run_bot():
         await e.respond(
             "🎙 <b>Voice Transcriber Bot</b>\n\n"
             "📋 <b>Команди:</b>\n"
-            "• <code>.р</code> — транскрибувати голосове\n"
+            "• <code>.р</code> — транскрибувати голосове / відео / кружечок\n"
             "• <code>.п</code> — перекласти текст\n"
             "• <code>/settings</code> — налаштування\n"
+            "• <code>/emoji_on</code> / <code>/emoji_off</code> — емодзі за інтонацією\n"
             "• <code>+chat</code> — автотранскрипція в чаті\n\n"
             "🎯 За замовчуванням мова визначається автоматично.",
             parse_mode='html'
