@@ -5,17 +5,10 @@ import subprocess
 import threading
 import requests
 import html
-from http.server import HTTPServer, BaseHTTPRequestHandler
-from telethon import TelegramClient, events
+from telethon import TelegramClient, Button, events
 from telethon.sessions import StringSession
-from settings import (
-    get_user_settings,
-    update_user_settings,
-    DEFAULT_SETTINGS,
-    add_auto_chat,
-    remove_auto_chat,
-    is_auto_chat
-)
+from settings import get_user_settings
+import state
 
 # ============================================
 # НАЛАШТУВАННЯ
@@ -168,18 +161,8 @@ def transcribe_audio(audio_path, language=None):
 
 
 # ============================================
-# ВЕБ-СЕРВЕР для UptimeRobot
+# ВЕБ-ПАНЕЛЬ — див. panel.py (FastAPI)
 # ============================================
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        self.send_response(200)
-        self.end_headers()
-        self.wfile.write(b"OK")
-    def do_HEAD(self):
-        self.send_response(200)
-        self.end_headers()
-    def log_message(self, *a):
-        pass
 
 def translate_text(text, target_lang):
     """Переклад через Groq LLM (GPT-OSS 120B)"""
@@ -451,6 +434,8 @@ async def handle_message(event):
         display_lang = detected_lang or mode
         lang_label = lang_display.get(display_lang, display_lang.upper() if display_lang else "?")
         
+        state.note_transcription(chat_title, lang_label, len(full_text))
+        
         if translated_text:
             safe_translation = html.escape(translated_text)
             target_label = lang_display.get(translate_to, translate_to.upper())
@@ -501,211 +486,6 @@ async def handle_message(event):
                 except:
                     pass
                     
-# ============================================
-# МЕНЮ НАЛАШТУВАНЬ
-# ============================================
-async def show_settings_menu(event):
-    user_id = event.sender_id
-    user_settings = get_user_settings(user_id)
-    
-    mode = user_settings.get('language_mode', 'auto')
-    auto_translate = user_settings.get('auto_translate', False)
-    translate_to = user_settings.get('translate_to', 'en')
-    emoji = user_settings.get('emoji', True)
-    
-    mode_names = {
-        "auto": "🎯 Auto-detect",
-        "uk": "🇺🇦 Ukrainian",
-        "en": "🇬🇧 English",
-        "ru": "Russian"
-    }
-    target_names = {
-        "en": "🇬🇧 English",
-        "uk": "🇺🇦 Ukrainian",
-        "ru": "Russian"
-    }
-    
-    text = (
-        "⚙️ <b>Settings</b>\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🎙 <b>TRANSCRIPTION MODE</b>\n"
-        f"   • {mode_names.get(mode, mode)}\n\n"
-        "🌍 <b>TRANSLATION</b>\n"
-        f"   • {'✅ Enabled' if auto_translate else '❌ Disabled'}\n"
-        f"   • Target: {target_names.get(translate_to, translate_to)}\n\n"
-        "✨ <b>EMOJI & PUNCTUATION</b>\n"
-        f"   • {'✅ Enabled' if emoji else '❌ Disabled'}\n"
-        "━━━━━━━━━━━━━━━━━━━━\n\n"
-        "🎙 <b>Transcription mode:</b>\n"
-        "<code>/auto</code> — auto-detect\n"
-        "<code>/lang_en</code> — 🇬🇧 English\n"
-        "<code>/lang_uk</code> — 🇺🇦 Ukrainian\n"
-        "<code>/lang_ru</code> — Russian\n\n"
-        "🌍 <b>Translation:</b>\n"
-        "<code>/tr_on</code> / <code>/tr_off</code>\n"
-        "<code>/to_en</code> — 🇬🇧 English\n"
-        "<code>/to_uk</code> — 🇺🇦 Ukrainian\n"
-        "<code>/to_ru</code> — Russian\n\n"
-        "✨ <b>Emoji & punctuation:</b>\n"
-        "<code>/emoji_on</code> / <code>/emoji_off</code>\n\n"
-        "🤖 <b>Auto-transcription:</b>\n"
-        "<code>+chat</code> — add chat\n"
-        "<code>-chat</code> — remove chat\n"
-        "<code>/chats</code> — list"
-    )
-    
-    try:
-        await event.message.delete()
-    except:
-        pass
-    
-    await event.respond(text, parse_mode='html')
-
-
-async def handle_settings_command(event):
-    user_id = event.sender_id
-    text = event.message.text.strip().lower()
-    
-    # === TRANSCRIPTION MODE ===
-    if text == '/auto':
-        update_user_settings(user_id, {"language_mode": "auto"})
-        await event.respond("✅ Mode: 🎯 Auto-detect")
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    if text == '/lang_en':
-        update_user_settings(user_id, {"language_mode": "en"})
-        await event.respond("✅ Mode: 🇬🇧 English")
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    if text == '/lang_uk':
-        update_user_settings(user_id, {"language_mode": "uk"})
-        await event.respond("✅ Mode: 🇺🇦 Ukrainian")
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    if text == '/lang_ru':
-        update_user_settings(user_id, {"language_mode": "ru"})
-        await event.respond("✅ Mode: Russian")
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    # === TRANSLATION ON/OFF ===
-    if text == '/tr_on':
-        update_user_settings(user_id, {"auto_translate": True})
-        await event.respond("✅ Auto-translation: ON")
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    if text == '/tr_off':
-        update_user_settings(user_id, {"auto_translate": False})
-        await event.respond("✅ Auto-translation: OFF")
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    # === TARGET LANGUAGE ===
-    if text == '/to_en':
-        update_user_settings(user_id, {"translate_to": "en"})
-        await event.respond("✅ Target: 🇬🇧 English")
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    if text == '/to_uk':
-        update_user_settings(user_id, {"translate_to": "uk"})
-        await event.respond("✅ Target: 🇺🇦 Ukrainian")
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    if text == '/to_ru':
-        update_user_settings(user_id, {"translate_to": "ru"})
-        await event.respond("✅ Target: Russian")
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    # === EMOJI & PUNCTUATION ===
-    if text == '/emoji_on':
-        update_user_settings(user_id, {"emoji": True})
-        await event.respond("✅ Emoji & punctuation: ON")
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    if text == '/emoji_off':
-        update_user_settings(user_id, {"emoji": False})
-        await event.respond("✅ Emoji & punctuation: OFF")
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    # === STATUS ===
-    if text == '/status':
-        s = get_user_settings(user_id)
-        mode = s.get('language_mode', 'auto')
-        auto = s.get('auto_translate', False)
-        target = s.get('translate_to', 'en')
-        emoji = s.get('emoji', True)
-        auto_chats = s.get('auto_chats', [])
-        
-        mode_names = {
-            "auto": "🎯 Auto-detect",
-            "uk": "🇺🇦 Ukrainian",
-            "en": "🇬🇧 English",
-            "ru": "Russian"
-        }
-        target_names = {
-            "en": "🇬🇧 English",
-            "uk": "🇺🇦 Ukrainian",
-            "ru": "Russian"
-        }
-        
-        chats_text = ""
-        if auto_chats:
-            chats_text = f"\n\n🤖 <b>Auto-transcription ({len(auto_chats)}):</b>\n"
-            for i, cid in enumerate(auto_chats, 1):
-                try:
-                    chat = await client.get_entity(cid)
-                    title = getattr(chat, 'title', None) or getattr(chat, 'first_name', None) or f"ID {cid}"
-                    if len(title) > 30:
-                        title = title[:30] + "..."
-                    chats_text += f"   {i}. {title}\n"
-                except:
-                    chats_text += f"   {i}. <i>ID {cid}</i>\n"
-        else:
-            chats_text = "\n\n🤖 <b>Auto-transcription:</b> off"
-        
-        text_response = (
-            "📊 <b>Status</b>\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🎙 <b>TRANSCRIPTION</b>\n"
-            f"   • Mode: {mode_names.get(mode, mode)}\n\n"
-            "🌍 <b>TRANSLATION</b>\n"
-            f"   • Auto: {'✅ ON' if auto else '❌ OFF'}\n"
-            f"   • Target: {target_names.get(target, target)}\n\n"
-            "✨ <b>EMOJI & PUNCTUATION</b>\n"
-            f"   • {'✅ ON' if emoji else '❌ OFF'}"
-            f"{chats_text}\n"
-            "━━━━━━━━━━━━━━━━━━━━\n"
-            "🤖 <b>System</b>\n"
-            "   • Model: Whisper Large v3\n"
-            "   • Translator: Groq gpt-oss-120b"
-        )
-        
-        await event.respond(text_response, parse_mode='html')
-        try: await event.message.delete()
-        except: pass
-        return
-
-
 # ============================================
 # АВТОТРАНСКРИПЦІЯ
 # ============================================
@@ -863,6 +643,8 @@ async def process_auto_audio(message):
         display_lang = detected_lang or mode
         lang_label = lang_display.get(display_lang, display_lang.upper() if display_lang else "?")
         
+        state.note_transcription(chat_title, lang_label, len(full_text))
+        
         if translated_text:
             safe_translation = html.escape(translated_text)
             target_label = lang_display.get(translate_to, translate_to.upper())
@@ -905,72 +687,6 @@ async def process_auto_audio(message):
                 await status_msg.delete()
             except:
                 pass
-
-# ============================================
-# КОМАНДИ +ЧАТ / -ЧАТ
-# ============================================
-async def handle_chat_commands(event):
-    text = event.message.text.strip()
-    me = await client.get_me()
-    
-    if text.lower() == '+chat':
-        chat_id = event.chat_id
-        chat_title = "this chat"
-        
-        try:
-            chat = await event.get_chat()
-            if hasattr(chat, 'title') and chat.title:
-                chat_title = chat.title
-            elif hasattr(chat, 'first_name') and chat.first_name:
-                chat_title = chat.first_name
-        except:
-            pass
-        
-        added = add_auto_chat(me.id, chat_id)
-        if added:
-            await event.respond(f"✅ Chat «{chat_title}» added to auto-transcription")
-        else:
-            await event.respond(f"⚠️ Chat «{chat_title}» already in list")
-        
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    if text.lower() == '-chat':
-        chat_id = event.chat_id
-        removed = remove_auto_chat(me.id, chat_id)
-        if removed:
-            await event.respond("❌ Chat removed from auto-transcription")
-        else:
-            await event.respond("⚠️ This chat was not in list")
-        
-        try: await event.message.delete()
-        except: pass
-        return
-    
-    if text.lower() == '/chats':
-        settings = get_user_settings(me.id)
-        auto_chats = settings.get('auto_chats', [])
-        
-        if not auto_chats:
-            await event.respond("📋 Auto-transcription list is empty")
-            try: await event.message.delete()
-            except: pass
-            return
-        
-        text_response = "📋 <b>Auto-transcription chats:</b>\n\n"
-        for i, cid in enumerate(auto_chats, 1):
-            try:
-                chat = await client.get_entity(cid)
-                title = getattr(chat, 'title', None) or getattr(chat, 'first_name', str(cid))
-                text_response += f"{i}. {title}\n"
-            except:
-                text_response += f"{i}. ID: {cid}\n"
-        
-        await event.respond(text_response, parse_mode='html')
-        try: await event.message.delete()
-        except: pass
-        return
 
 async def handle_translate_command(event):
     message = event.message
@@ -1024,30 +740,23 @@ async def handle_translate_command(event):
 # ЗАПУСК БОТА
 # ============================================
 async def run_bot():
-    global client, BOT_STATUS, BOT_NAME
+    global client, BOT_NAME
     
-    BOT_STATUS = "запуск..."
+    loop = asyncio.get_running_loop()
+    state.set_loop(loop)
     
+    if not API_ID or not API_HASH or not SESSION_STRING:
+        state.set_status("⚠️ немає API_ID / API_HASH / SESSION_STRING")
+        print("⚠️ Бот не налаштований: панель працює, Telegram відключено")
+        return
+    
+    state.set_status("запуск...")
     client = TelegramClient(StringSession(SESSION_STRING), API_ID, API_HASH)
+    state.set_client(client)
     
     @client.on(events.NewMessage(pattern=r'^\.(р|т|t)$'))
     async def handler_msg(e):
         await handle_message(e)
-    
-    @client.on(events.NewMessage(pattern=r'^/settings$'))
-    async def handler_settings(e):
-        print(f"⚙️ /settings від {e.sender_id}")
-        await show_settings_menu(e)
-    
-    @client.on(events.NewMessage(pattern=r'^/(auto|lang_(en|uk|ru)|tr_(on|off)|to_(en|uk|ru)|emoji_(on|off)|status)$'))
-    async def handler_settings_commands(e):
-        print(f"⚙️ Команда: {e.message.text}")
-        await handle_settings_command(e)
-    
-    @client.on(events.NewMessage(pattern=r'^(\+chat|-chat|/chats)$'))
-    async def handler_chat_commands(e):
-        print(f"📋 Команда: {e.message.text}")
-        await handle_chat_commands(e)
     
     @client.on(events.NewMessage(incoming=True))
     async def handler_auto(e):
@@ -1060,43 +769,84 @@ async def run_bot():
     
     @client.on(events.NewMessage(pattern=r'^/start$'))
     async def handler_start(e):
-    # Тільки в особистих чатах
+        # Тільки в особистих чатах
         if not e.is_private:
             return
-    
+        
         await e.respond(
-            "🎙 <b>Voice Transcriber Bot</b>\n\n"
-            "📋 <b>Команди:</b>\n"
-            "• <code>.р</code> — транскрибувати голосове / відео / кружечок\n"
-            "• <code>.п</code> — перекласти текст\n"
-            "• <code>/settings</code> — налаштування\n"
-            "• <code>/emoji_on</code> / <code>/emoji_off</code> — емодзі за інтонацією\n"
-            "• <code>+chat</code> — автотранскрипція в чаті\n\n"
+            "🎙 <b>Voice Transcriber</b>\n\n"
+            "• <code>.р</code> (реплай на голосове/відео) — розшифровка\n"
+            "• <code>.п</code> (реплай на текст) — переклад\n"
+            "• <code>/panel</code> — панель керування\n\n"
             "🎯 За замовчуванням мова визначається автоматично.",
             parse_mode='html'
         )
         try: await e.message.delete()
         except: pass
     
+    @client.on(events.NewMessage(pattern=r'^/panel$'))
+    async def handler_panel(e):
+        url = get_panel_url()
+        if url:
+            await e.respond(
+                "🖥 <b>Панель керування</b>\nНалаштування, авточати, статус і перезапуск.",
+                parse_mode='html',
+                buttons=[[Button.url("Відкрити панель", url)]]
+            )
+        else:
+            await e.respond("⚠️ Посилання на панель не задане (PANEL_URL).")
+        try: await e.message.delete()
+        except: pass
+    
     await client.start()
     me = await client.get_me()
     BOT_NAME = me.first_name or "user"
-    BOT_STATUS = "працює ✅"
+    if state.get_owner_id() is None:
+        state.set_owner_id(me.id)
+    state.set_status("працює ✅")
     print(f"✅ {BOT_NAME}")
     await client.run_until_disconnected()
+    state.set_status("зупинено ✗")
+
+
+def get_panel_url():
+    url = os.getenv("PANEL_URL") or (os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
+    if url and not url.endswith("/app"):
+        url += "/app"
+    return url or None
 
 
 def start_bot():
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
-    loop.run_until_complete(run_bot())
+    try:
+        loop.run_until_complete(run_bot())
+    except Exception as e:
+        state.set_status(f"❌ помилка: {str(e)[:60]}")
+        print(f"❌ Бот зупинився: {e}")
+    finally:
+        state.set_client(None)
+        state.set_loop(None)
+
+
+def start_bot_thread():
+    t = threading.Thread(target=start_bot, daemon=True)
+    state.set_bot_thread(t)
+    t.start()
+    return t
 
 
 # ============================================
 # MAIN
 # ============================================
 if __name__ == "__main__":
-    threading.Thread(target=start_bot, daemon=True).start()
-    srv = HTTPServer(('0.0.0.0', PORT), Handler)
-    print(f"🌐 Порт {PORT}")
-    srv.serve_forever()
+    import uvicorn
+    from panel import app as panel_app, set_bot_starter
+
+    if os.getenv("PANEL_OWNER_ID"):
+        state.set_owner_id(int(os.getenv("PANEL_OWNER_ID")))
+
+    set_bot_starter(start_bot_thread)
+    start_bot_thread()
+    print(f"🌐 Панель: http://0.0.0.0:{PORT}/app")
+    uvicorn.run(panel_app, host="0.0.0.0", port=PORT, log_level="warning")

@@ -1,0 +1,134 @@
+<!doctype html>
+<html lang="uk">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voice панель</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <div>
+    <div class="title">🎙 Voice панель</div>
+    <div class="subtitle" id="bot-name">—</div>
+  </div>
+  <span class="pill" id="status-pill">…</span>
+</header>
+
+<nav>
+  <button class="tab active" data-tab="status">Статус</button>
+  <button class="tab" data-tab="settings">Налаштування</button>
+  <button class="tab" data-tab="chats">Авточати</button>
+</nav>
+
+<main>
+
+  <!-- СТАТУС -->
+  <section id="tab-status" class="tab-page active">
+    <div class="grid">
+      <div class="card">
+        <div class="card-label">Аптайм сервера</div>
+        <div class="card-value" id="uptime">—</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Модель</div>
+        <div class="card-value small">Whisper Large v3<br><span class="muted">+ Groq gpt-oss-120b</span></div>
+      </div>
+    </div>
+
+    <div class="card wide">
+      <div class="card-label">Остання транскрипція</div>
+      <div id="last-tr" class="last-tr">—</div>
+    </div>
+
+    <div class="card wide danger-zone">
+      <div class="card-label">Керування</div>
+      <button id="btn-restart" class="btn danger">🔄 Перезапустити бота</button>
+      <div class="muted small-note">Перепідключить Telegram-клієнт. Активна розшифровка буде перервана.</div>
+    </div>
+  </section>
+
+  <!-- НАЛАШТУВАННЯ -->
+  <section id="tab-settings" class="tab-page">
+    <div class="card wide">
+      <label class="field-label" for="sel-mode">Режим розшифровки</label>
+      <select id="sel-mode">
+        <option value="auto">🎯 Автовизначення</option>
+        <option value="uk">🇺🇦 Українська</option>
+        <option value="en">🇬🇧 Англійська</option>
+        <option value="ru">🇷🇺 Російська</option>
+        <option value="pl">🇵🇱 Польська</option>
+        <option value="de">🇩🇪 Німецька</option>
+        <option value="fr">🇫🇷 Французька</option>
+        <option value="es">🇪🇸 Іспанська</option>
+      </select>
+      <div class="muted small-note">Автовизначення не надсилає Whisper підказку мови — точніше для змішаних мов.</div>
+    </div>
+
+    <div class="card wide">
+      <div class="row">
+        <div>
+          <div class="field-label">Автопереклад</div>
+          <div class="muted small-note">Перекладати розшифровку одразу</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="tg-translate"><span class="slider"></span></label>
+      </div>
+
+      <label class="field-label" for="sel-target" style="margin-top:14px">Мова перекладу</label>
+      <select id="sel-target">
+        <option value="en">🇬🇧 Англійська</option>
+        <option value="uk">🇺🇦 Українська</option>
+        <option value="ru">🇷🇺 Російська</option>
+        <option value="pl">🇵🇱 Польська</option>
+        <option value="de">🇩🇪 Німецька</option>
+        <option value="fr">🇫🇷 Французька</option>
+        <option value="es">🇪🇸 Іспанська</option>
+      </select>
+    </div>
+
+    <div class="card wide">
+      <div class="row">
+        <div>
+          <div class="field-label">Емодзі та пунктуація</div>
+          <div class="muted small-note">Додати емодзі за інтонацією: 😂 сміх, 😢 плач тощо</div>
+        </div>
+        <label class="switch"><input type="checkbox" id="tg-emoji"><span class="slider"></span></label>
+      </div>
+    </div>
+  </section>
+
+  <!-- АВТОЧАТИ -->
+  <section id="tab-chats" class="tab-page">
+    <div class="card wide">
+      <div class="field-label">Додати чат за ID</div>
+      <div class="row">
+        <input id="inp-chat-id" type="text" inputmode="numeric" placeholder="напр. -1001234567890">
+        <button id="btn-add-chat" class="btn">Додати</button>
+      </div>
+      <div class="muted small-note">ID чата можна взяти з панелі або з повідомлення бота у чаті. Групи мають вигляд -100…</div>
+    </div>
+
+    <div class="card wide">
+      <div class="field-label">Список авточатів</div>
+      <ul id="chat-list" class="chat-list"></ul>
+      <div id="chats-empty" class="muted">Список порожній</div>
+    </div>
+  </section>
+
+</main>
+
+<div id="toast"></div>
+
+<!-- Оверлей вводу токена (коли PANEL_TOKEN заданий) -->
+<div id="token-overlay" class="overlay hidden">
+  <div class="overlay-card">
+    <div class="field-label">Потрібен токен доступу</div>
+    <input id="inp-token" type="password" placeholder="PANEL_TOKEN">
+    <button id="btn-token" class="btn primary">Увійти</button>
+    <div id="token-error" class="muted"></div>
+  </div>
+</div>
+
+<script src="/static/app.js"></script>
+</body>
+</html>
