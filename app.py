@@ -7,7 +7,7 @@ import requests
 import html
 from telethon import TelegramClient, Button, events
 from telethon.sessions import StringSession
-from settings import get_user_settings
+from settings import get_user_settings, add_auto_chat, remove_auto_chat
 import state
 
 # ============================================
@@ -688,6 +688,54 @@ async def process_auto_audio(message):
             except:
                 pass
 
+# ============================================
+# КОМАНДИ +ЧАТ / -ЧАТ
+# ============================================
+async def handle_chat_commands(event):
+    text = event.message.text.strip().lower()
+    me = await client.get_me()
+    chat_id = event.chat_id
+    
+    # назва чата для повідомлення
+    chat_title = "цей чат"
+    try:
+        chat = await event.get_chat()
+        chat_title = (
+            getattr(chat, 'title', None)
+            or getattr(chat, 'first_name', None)
+            or "цей чат"
+        )
+    except:
+        pass
+    
+    if text == '+chat':
+        if add_auto_chat(me.id, chat_id):
+            await event.respond(
+                f"✅ <b>{html.escape(str(chat_title))}</b> додано в автотранскрипцію",
+                parse_mode='html'
+            )
+        else:
+            await event.respond(
+                f"⚠️ <b>{html.escape(str(chat_title))}</b> уже в списку автотранскрипції",
+                parse_mode='html'
+            )
+        try: await event.message.delete()
+        except: pass
+        return
+    
+    if text == '-chat':
+        if remove_auto_chat(me.id, chat_id):
+            await event.respond(
+                f"🗑 <b>{html.escape(str(chat_title))}</b> видалено з автотранскрипції",
+                parse_mode='html'
+            )
+        else:
+            await event.respond("⚠️ Цей чат не було в списку автотранскрипції")
+        try: await event.message.delete()
+        except: pass
+        return
+
+
 async def handle_translate_command(event):
     message = event.message
     
@@ -767,22 +815,9 @@ async def run_bot():
     async def handler_translate(e):
         await handle_translate_command(e)
     
-    @client.on(events.NewMessage(pattern=r'^/start$'))
-    async def handler_start(e):
-        # Тільки в особистих чатах
-        if not e.is_private:
-            return
-        
-        await e.respond(
-            "🎙 <b>Voice Transcriber</b>\n\n"
-            "• <code>.р</code> (реплай на голосове/відео) — розшифровка\n"
-            "• <code>.п</code> (реплай на текст) — переклад\n"
-            "• <code>/panel</code> — панель керування\n\n"
-            "🎯 За замовчуванням мова визначається автоматично.",
-            parse_mode='html'
-        )
-        try: await e.message.delete()
-        except: pass
+    @client.on(events.NewMessage(pattern=r'^(\+chat|-chat)$'))
+    async def handler_chat_cmds(e):
+        await handle_chat_commands(e)
     
     @client.on(events.NewMessage(pattern=r'^/panel$'))
     async def handler_panel(e):
