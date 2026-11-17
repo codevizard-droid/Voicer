@@ -789,9 +789,13 @@ async def run_bot():
         url = get_panel_url()
         if url:
             await e.respond(
-                "🖥 <b>Панель керування</b>\nНалаштування, авточати, статус і перезапуск.",
+                "🖥 <b>Панель керування</b>\n"
+                "Налаштування, авточати, статус і перезапуск.\n\n"
+                f"👉 <a href=\"{url}\">Відкрити панель</a>\n"
+                f"<code>{url}</code>",
                 parse_mode='html',
-                buttons=[[Button.url("Відкрити панель", url)]]
+                link_preview=False,
+                buttons=[[Button.url("🖥 Відкрити панель", url)]]
             )
         else:
             await e.respond("⚠️ Посилання на панель не задане (PANEL_URL).")
