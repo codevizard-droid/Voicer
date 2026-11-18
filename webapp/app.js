@@ -96,6 +96,15 @@ async function loadStatus() {
   $('bot-name').textContent = s.name ? `Бот: ${s.name}` : 'Бот не підключений';
   $('uptime').textContent = fmtUptime(s.uptime_seconds);
 
+  const storageEl = $('storage');
+  if (s.storage === 'upstash') {
+    storageEl.innerHTML = '☁️ Upstash (хмара) — зберігається після рестартів'
+      + (s.storage_pending ? '<br><span class="pill err">⚠️ є несинхронізовані зміни</span>' : '');
+  } else {
+    storageEl.innerHTML = '💾 Локальний файл — <b>зникне після рестарту Render</b>'
+      + '<br><span class="muted small-note">Додай UPSTASH_REDIS_REST_URL і UPSTASH_REDIS_REST_TOKEN у змінні оточення.</span>';
+  }
+
   const lt = s.last_transcription;
   $('last-tr').innerHTML = lt
     ? `🕐 ${lt.time}<br>💬 Чат: <b>${escapeHtml(lt.chat || '—')}</b><br>🌐 Мова: <b>${escapeHtml(lt.lang || '—')}</b><br>✍️ Символів: <b>${lt.chars}</b>`

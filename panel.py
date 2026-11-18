@@ -19,6 +19,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 import state
+import settings as user_store
 from settings import (
     get_user_settings,
     update_user_settings,
@@ -79,11 +80,17 @@ app.mount('/static', StaticFiles(directory=WEBAPP_DIR), name='static')
 # ============================================
 @app.get('/api/status')
 async def api_status():
+    # Якщо минулий запис у хмару не вдався — пробуємо ще раз (панель опитує статус)
+    if user_store.is_pending():
+        await asyncio.to_thread(user_store.sync_pending)
+
     return {
         'status': state.get_status(),
         'name': state.get_name(),
         'uptime_seconds': state.get_uptime(),
         'owner_ready': state.get_owner_id() is not None,
+        'storage': user_store.storage_name(),
+        'storage_pending': user_store.is_pending(),
         'last_transcription': state.get_last_transcription(),
         'server_time': datetime.now().isoformat(timespec='seconds'),
     }
