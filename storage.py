@@ -15,8 +15,8 @@ import os
 
 import requests
 
-_KEY = "voicer:settings"
-_TIMEOUT = 8
+KEY = "voicer:settings"
+TIMEOUT = 8
 
 
 def _creds():
@@ -34,46 +34,70 @@ def name():
     return "upstash" if enabled() else "file"
 
 
-def _headers(token):
-    return {"Authorization": f"Bearer {token}"}
+def masked_url():
+    """URL для показу в панелі без токена (токен і так окремо)."""
+    url, _ = _creds()
+    if not url:
+        return None
+    if len(url) <= 42:
+        return url
+    return url[:30] + "…" + url[-10:]
 
 
-def load():
-    """Читає словник налаштувань із хмари.
+def fetch():
+    """Читає налаштування з хмари.
 
-    None — якщо сховище не налаштоване, порожнє або недоступне.
+    Повертає dict:
+        configured — чи задані env
+        ok         — чи вдалося виконати запит
+        data       — словник або None (ключа ще немає)
+        error      — текст помилки або None
     """
     url, token = _creds()
     if not url or not token:
-        return None
+        return {
+            "configured": False,
+            "ok": False,
+            "data": None,
+            "error": "UPSTASH_REDIS_REST_URL / _TOKEN не задані",
+        }
     try:
-        r = requests.get(f"{url}/get/{_KEY}", headers=_headers(token), timeout=_TIMEOUT)
+        r = requests.get(
+            f"{url}/get/{KEY}",
+            headers={"Authorization": f"Bearer {token}"},
+            timeout=TIMEOUT,
+        )
         r.raise_for_status()
         value = r.json().get("result")
         if not value:
-            return None
+            return {"configured": True, "ok": True, "data": None, "error": None}
         data = json.loads(value)
-        return data if isinstance(data, dict) else None
+        if not isinstance(data, dict):
+            return {
+                "configured": True,
+                "ok": False,
+                "data": None,
+                "error": "значення не є JSON-об'єктом",
+            }
+        return {"configured": True, "ok": True, "data": data, "error": None}
     except Exception as e:
-        print(f"⚠️ storage load: {e}")
-        return None
+        return {"configured": True, "ok": False, "data": None, "error": str(e)[:200]}
 
 
-def save(data):
-    """Записує словник у хмару. True — якщо успішно."""
+def put(data):
+    """Записує словник у хмару. Повертає (ok, error)."""
     url, token = _creds()
     if not url or not token:
-        return False
+        return False, "UPSTASH_REDIS_REST_URL / _TOKEN не задані"
     try:
         payload = json.dumps(data, ensure_ascii=False)
         r = requests.post(
-            f"{url}/set/{_KEY}",
-            headers=_headers(token),
+            f"{url}/set/{KEY}",
+            headers={"Authorization": f"Bearer {token}"},
             data=payload.encode("utf-8"),
-            timeout=_TIMEOUT,
+            timeout=TIMEOUT,
         )
         r.raise_for_status()
-        return True
+        return True, None
     except Exception as e:
-        print(f"⚠️ storage save: {e}")
-        return False
+        return False, str(e)[:200]

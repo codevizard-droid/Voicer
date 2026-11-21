@@ -11,11 +11,13 @@ _lock = threading.Lock()
 _status = "запуск..."
 _name = ""
 _owner_id = None
+_bot_user_id = None
 _loop = None
 _client = None
 _bot_thread = None
 _started_at = time.time()
 _last_transcription = None
+_keepalive = {"enabled": False, "url": None, "interval": None, "reason": "не запускався"}
 
 
 def set_status(status):
@@ -30,17 +32,23 @@ def get_status():
 
 
 def set_bot_info(name, owner_id=None):
-    global _name
+    global _name, _bot_user_id, _owner_id
     with _lock:
         _name = name or ""
         if owner_id is not None:
-            global _owner_id
-            _owner_id = owner_id
+            _bot_user_id = owner_id
+            if _owner_id is None:
+                _owner_id = owner_id
 
 
 def get_name():
     with _lock:
         return _name
+
+
+def get_bot_user_id():
+    with _lock:
+        return _bot_user_id
 
 
 def set_owner_id(owner_id):
@@ -102,6 +110,16 @@ def note_transcription(chat, lang, chars):
 def get_last_transcription():
     with _lock:
         return _last_transcription
+
+
+def set_keepalive(**info):
+    with _lock:
+        _keepalive.update(info)
+
+
+def get_keepalive():
+    with _lock:
+        return dict(_keepalive)
 
 
 def get_uptime():

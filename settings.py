@@ -1,5 +1,6 @@
 import json
 import os
+import time
 from threading import Lock
 
 import storage
@@ -10,7 +11,9 @@ _lock = Lock()
 # Кеш у пам'яті: єдине джерело істини для процесу.
 # Хмара (Upstash) — durable-копія, файл — локальна копія для відладки.
 _cache = None
-_pending = False
+_pending = False          # є зміни, які не вдалося вивантажити в хмару
+_cloud_ok = None          # None — ще не перевіряли, True/False — стан останньої операції
+_cloud_error = None
 
 DEFAULT_SETTINGS = {
     "language_mode": "auto",     # "auto", "uk", "en", "ru"
@@ -41,28 +44,64 @@ def _write_file(settings):
         print(f"⚠️ settings file write: {e}")
 
 
+def _fetch_remote(attempts=3):
+    """Читання з хмари з короткими ретраями (холодний старт Render)."""
+    global _cloud_ok, _cloud_error
+
+    result = None
+    for i in range(attempts):
+        result = storage.fetch()
+        if result['ok']:
+            _cloud_ok = True
+            _cloud_error = None
+            return result
+        if i < attempts - 1:
+            time.sleep(0.5 * (2 ** i))
+    _cloud_ok = False
+    _cloud_error = result.get('error') if result else 'невідома помилка'
+    print(f"⚠️ storage fetch: {_cloud_error}")
+    return result
+
+
+def _upload(settings):
+    """Запис у хмару. Оновлює стан; повертає True/False."""
+    global _pending, _cloud_ok, _cloud_error
+
+    ok, err = storage.put(settings)
+    _cloud_ok = ok
+    _cloud_error = None if ok else err
+    _pending = not ok
+    if not ok:
+        print(f"⚠️ storage save: {err}")
+    return ok
+
+
 def _load():
     """Піднімає налаштування в кеш: хмара → файл → порожньо."""
-    global _cache, _pending
+    global _cache
 
     if _cache is not None:
         return _cache
 
-    remote = storage.load()
-    if remote is not None:
-        _cache = remote
-        _write_file(_cache)  # локальна копія під рукою
+    if storage.enabled():
+        result = _fetch_remote()
+        if result['ok']:
+            if result['data'] is not None:
+                _cache = result['data']
+                _write_file(_cache)  # локальна копія під рукою
+                return _cache
+            # У хмарі ще порожньо: піднімаємо локальний файл і мігруємо
+            _cache = _read_file()
+            if _cache:
+                _upload(_cache)
+                print("☁️ Налаштування мігровано у хмару")
+            return _cache
+        # Хмара недоступна — беремо локальну копію, запис відкладемо
+        _cache = _read_file()
+        _pending = True
         return _cache
 
     _cache = _read_file()
-
-    # Перша міграція: у хмарі ще нічого, а локально щось є
-    if _cache and storage.enabled():
-        if storage.save(_cache):
-            print("☁️ Налаштування мігровано у хмару")
-        else:
-            _pending = True
-
     return _cache
 
 
@@ -73,27 +112,21 @@ def load_settings():
 
 
 def save_settings(settings):
-    global _cache, _pending
+    global _cache
 
     with _lock:
         _cache = settings
         _write_file(settings)
-        if storage.enabled():
-            if storage.save(settings):
-                _pending = False
-            else:
-                _pending = True
+        if storage.enabled() or _pending:
+            _upload(settings)
 
 
 def sync_pending():
     """Повторна спроба вивантажити зміни в хмару (виклик з панелі)."""
-    global _pending
-
     with _lock:
         if not _pending or _cache is None:
             return True
-        if storage.save(_cache):
-            _pending = False
+        if _upload(_cache):
             print("☁️ Відкладений запис налаштувань вивантажено")
             return True
         return False
@@ -106,6 +139,19 @@ def is_pending():
 
 def storage_name():
     return storage.name()
+
+
+def storage_info():
+    with _lock:
+        return {
+            'backend': storage.name(),
+            'configured': storage.enabled(),
+            'cloud_ok': _cloud_ok,
+            'pending': _pending,
+            'error': _cloud_error,
+            'url': storage.masked_url(),
+            'key': storage.KEY if storage.enabled() else None,
+        }
 
 
 def get_user_settings(user_id):

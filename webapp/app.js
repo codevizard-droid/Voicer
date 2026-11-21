@@ -95,21 +95,87 @@ async function loadStatus() {
   setStatusPill(s.status);
   $('bot-name').textContent = s.name ? `Бот: ${s.name}` : 'Бот не підключений';
   $('uptime').textContent = fmtUptime(s.uptime_seconds);
-
-  const storageEl = $('storage');
-  if (s.storage === 'upstash') {
-    storageEl.innerHTML = '☁️ Upstash (хмара) — зберігається після рестартів'
-      + (s.storage_pending ? '<br><span class="pill err">⚠️ є несинхронізовані зміни</span>' : '');
-  } else {
-    storageEl.innerHTML = '💾 Локальний файл — <b>зникне після рестарту Render</b>'
-      + '<br><span class="muted small-note">Додай UPSTASH_REDIS_REST_URL і UPSTASH_REDIS_REST_TOKEN у змінні оточення.</span>';
-  }
+  renderStorage(s);
+  renderKeepalive(s.keepalive);
 
   const lt = s.last_transcription;
   $('last-tr').innerHTML = lt
     ? `🕐 ${lt.time}<br>💬 Чат: <b>${escapeHtml(lt.chat || '—')}</b><br>🌐 Мова: <b>${escapeHtml(lt.lang || '—')}</b><br>✍️ Символів: <b>${lt.chars}</b>`
     : 'Ще не було транскрипцій після запуску сервера';
 }
+
+function renderStorage(s) {
+  const el = $('storage');
+  const info = s.storage_info || {};
+  let html;
+
+  if (s.storage === 'upstash') {
+    html = '☁️ Upstash (хмара) — налаштування переживають рестарт';
+    if (s.storage_pending) {
+      html += '<br><span class="pill err">⚠️ є несинхронізовані зміни</span>';
+    } else if (info.cloud_ok === false) {
+      html += '<br><span class="pill err">⚠️ останній запит до хмари не вдався</span>';
+    } else if (info.cloud_ok === true) {
+      html += '<br><span class="pill ok">✅ синхронізовано</span>';
+    }
+    if (info.key) {
+      html += `<div class="muted small-note">Ключ: ${escapeHtml(info.key)}</div>`;
+    }
+    if (info.error) {
+      html += `<div class="muted small-note">Помилка: ${escapeHtml(info.error)}</div>`;
+    }
+  } else {
+    html = '💾 Локальний файл — <b>зникне після рестарту Render</b>'
+      + '<br><span class="muted small-note">Додай UPSTASH_REDIS_REST_URL і UPSTASH_REDIS_REST_TOKEN у змінні оточення.</span>';
+  }
+
+  const owner = s.owner_id ?? '—';
+  const bot = s.bot_user_id ?? '—';
+  html += `<div class="muted small-note">ID налаштувань: ${owner} · ID акаунта бота: ${bot}</div>`;
+  if (s.owner_id && s.bot_user_id && s.owner_id !== s.bot_user_id) {
+    html += '<br><span class="pill err">⚠️ PANEL_OWNER_ID не збігається з акаунтом бота — панель і бот бачать різні списки чатів</span>';
+  }
+
+  el.innerHTML = html;
+}
+
+function renderKeepalive(k) {
+  const el = $('keepalive');
+  if (!k) {
+    el.textContent = '—';
+    return;
+  }
+  if (!k.enabled) {
+    el.innerHTML = `❌ Вимкнено — <span class="muted">${escapeHtml(k.reason || '')}</span>`;
+    return;
+  }
+  let html = `🩺 Кожні ${Math.round(k.interval / 60)} хв → ${escapeHtml(k.url)}`;
+  if (k.last_status) {
+    html += `<div class="muted small-note">Останній пінг: ${escapeHtml(String(k.last_status))}</div>`;
+  }
+  el.innerHTML = html;
+}
+
+$('btn-storage-test').addEventListener('click', async () => {
+  const btn = $('btn-storage-test');
+  const old = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = '⏳ Перевіряю...';
+  try {
+    const r = await api('/api/storage/test', { method: 'POST', body: '{}' });
+    if (r.ok) {
+      toast(`✅ Сховище працює (${r.chats_in_cloud.length} чатів у хмарі)`);
+    } else {
+      toast('❌ ' + (r.error || 'перевірка не пройдена'), true);
+    }
+    loadStatus().catch(showErr);
+  } catch (e) {
+    showErr(e);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = old;
+  }
+});
 
 function escapeHtml(s) {
   return String(s).replace(/[&<>"']/g, (c) => ({

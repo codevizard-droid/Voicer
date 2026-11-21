@@ -3,6 +3,7 @@ import uuid
 import asyncio
 import subprocess
 import threading
+import time
 import requests
 import html
 from telethon import TelegramClient, Button, events
@@ -840,19 +841,69 @@ async def run_bot():
     await client.start()
     me = await client.get_me()
     BOT_NAME = me.first_name or "user"
-    if state.get_owner_id() is None:
-        state.set_owner_id(me.id)
+    state.set_bot_info(BOT_NAME, me.id)
     state.set_status("працює ✅")
     print(f"✅ {BOT_NAME}")
     await client.run_until_disconnected()
     state.set_status("зупинено ✗")
 
 
+def get_panel_base_url():
+    """Публічна база сервісу (без /app), напр. https://voicer.onrender.com."""
+    url = (os.getenv("PANEL_URL") or os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
+    if url.endswith("/app"):
+        url = url[:-4]
+    return url
+
+
 def get_panel_url():
-    url = os.getenv("PANEL_URL") or (os.getenv("RENDER_EXTERNAL_URL") or "").rstrip("/")
-    if url and not url.endswith("/app"):
-        url += "/app"
-    return url or None
+    base = get_panel_base_url()
+    return f"{base}/app" if base else None
+
+
+def start_keepalive():
+    """Self-ping: Render гасить Free-інстанс після ~15 хв без вхідних HTTP.
+
+    Запит до власного публічного URL проходить через проксі Render,
+    тому вважається вхідним трафіком. Це дозволяє боту бути онлайн
+    без зовнішнього UptimeRobot. Вимкнути: SELF_PING=0.
+    """
+    base = get_panel_base_url()
+    if not base:
+        print("💤 Self-ping: немає публічної URL (PANEL_URL / RENDER_EXTERNAL_URL)")
+        state.set_keepalive(enabled=False, reason="немає публічної URL")
+        return None
+    if os.getenv("SELF_PING", "1") == "0":
+        print("💤 Self-ping вимкнено (SELF_PING=0)")
+        state.set_keepalive(enabled=False, reason="SELF_PING=0")
+        return None
+
+    try:
+        interval = max(60, int(os.getenv("SELF_PING_INTERVAL", "600")))
+    except ValueError:
+        interval = 600
+
+    url = base + "/"
+    state.set_keepalive(enabled=True, url=url, interval=interval, reason=None)
+
+    def loop():
+        print(f"🩺 Self-ping: {url} кожні {interval} с")
+        delay = 10  # дати uvicorn час піднятися
+        while True:
+            time.sleep(delay)
+            try:
+                r = requests.get(url, timeout=20)
+                print(f"🩺 keep-alive {r.status_code}")
+                state.set_keepalive(last_status=r.status_code)
+                delay = interval
+            except Exception as e:
+                print(f"⚠️ keep-alive: {e}")
+                state.set_keepalive(last_status=f"error: {str(e)[:80]}")
+                delay = min(interval, 60)
+
+    t = threading.Thread(target=loop, daemon=True)
+    t.start()
+    return t
 
 
 def start_bot():
@@ -887,5 +938,6 @@ if __name__ == "__main__":
 
     set_bot_starter(start_bot_thread)
     start_bot_thread()
+    start_keepalive()
     print(f"🌐 Панель: http://0.0.0.0:{PORT}/app")
     uvicorn.run(panel_app, host="0.0.0.0", port=PORT, log_level="warning")

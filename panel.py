@@ -20,6 +20,7 @@ from pydantic import BaseModel
 
 import state
 import settings as user_store
+import storage
 from settings import (
     get_user_settings,
     update_user_settings,
@@ -89,10 +90,48 @@ async def api_status():
         'name': state.get_name(),
         'uptime_seconds': state.get_uptime(),
         'owner_ready': state.get_owner_id() is not None,
+        'owner_id': state.get_owner_id(),
+        'bot_user_id': state.get_bot_user_id(),
         'storage': user_store.storage_name(),
         'storage_pending': user_store.is_pending(),
+        'storage_info': user_store.storage_info(),
+        'keepalive': state.get_keepalive(),
         'last_transcription': state.get_last_transcription(),
         'server_time': datetime.now().isoformat(timespec='seconds'),
+    }
+
+
+@app.post('/api/storage/test')
+def api_storage_test():
+    """Записати поточні налаштування в хмару, прочитати назад і порівняти."""
+    if not storage.enabled():
+        return {
+            'ok': False,
+            'configured': False,
+            'error': 'UPSTASH_REDIS_REST_URL / UPSTASH_REDIS_REST_TOKEN не задані',
+        }
+
+    current = user_store.load_settings()
+    ok, err = storage.put(current)
+    if not ok:
+        return {'ok': False, 'configured': True, 'error': f'запис: {err}'}
+
+    res = storage.fetch()
+    if not res['ok']:
+        return {'ok': False, 'configured': True, 'error': f"читання: {res['error']}"}
+
+    remote = res['data'] or {}
+    equal = remote == current
+
+    chats = remote.get(str(state.get_owner_id()), {}).get('auto_chats', [])
+    return {
+        'ok': equal,
+        'configured': True,
+        'key': storage.KEY,
+        'url': storage.masked_url(),
+        'owners_in_cloud': sorted(remote.keys()),
+        'chats_in_cloud': chats,
+        'error': None if equal else 'дані в хмарі відрізняються від локальних',
     }
 
 
